@@ -24,8 +24,10 @@ final class GlobalHotkeyManager: ObservableObject {
     var onKeyDown: (() -> Void)?
     var onKeyUp: (() -> Void)?
 
-    private var eventHandler: EventHandlerRef?
-    private var hotkeyRef: EventHotKeyRef?
+    // nonisolated(unsafe): only mutated on the main actor; deinit needs to read
+    // them for teardown, which is safe because the object is uniquely referenced.
+    private nonisolated(unsafe) var eventHandler: EventHandlerRef?
+    private nonisolated(unsafe) var hotkeyRef: EventHotKeyRef?
     private var isPressed = false
     private let hotkeyID = EventHotKeyID(signature: OSType(0x4D_44_49_43), id: 1) // MDIC
 
@@ -46,6 +48,13 @@ final class GlobalHotkeyManager: ObservableObject {
         if status != noErr {
             registrationStatus = .failed("Carbon event handler error \(status)")
         }
+    }
+
+    deinit {
+        // The Carbon handler holds an unretained pointer to self; tear both
+        // registrations down so it can never fire against a freed instance.
+        if let hotkeyRef { UnregisterEventHotKey(hotkeyRef) }
+        if let eventHandler { RemoveEventHandler(eventHandler) }
     }
 
     func register(_ shortcut: HotkeyShortcut) {

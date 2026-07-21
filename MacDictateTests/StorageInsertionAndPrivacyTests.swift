@@ -38,7 +38,7 @@ private final class MockClipboard: ClipboardManaging {
     var text: String?
     var changeCount = 0
     func snapshot() -> ClipboardSnapshot { ClipboardSnapshot(items: []) }
-    func writeText(_ text: String) -> Int { self.text = text; changeCount += 1; return changeCount }
+    func writeText(_ text: String, transient: Bool) -> Int { self.text = text; changeCount += 1; return changeCount }
     func restore(_ snapshot: ClipboardSnapshot, ifChangeCountIs expectedChangeCount: Int) -> Bool { true }
 }
 
@@ -80,6 +80,19 @@ final class StorageInsertionAndPrivacyTests: XCTestCase {
 
         XCTAssertFalse(manager.restore(snapshot, ifChangeCountIs: expected))
         XCTAssertEqual(pasteboard.string(forType: .string), "newer user value")
+    }
+
+    func testTransientWritesCarryClipboardManagerMarker() {
+        let pasteboard = NSPasteboard(name: .init("MacDictateTests-\(UUID())"))
+        let manager = ClipboardManager(pasteboard: pasteboard)
+
+        manager.writeText("temporary transcript", transient: true)
+        XCTAssertEqual(pasteboard.string(forType: .string), "temporary transcript")
+        XCTAssertNotNil(pasteboard.data(forType: ClipboardManager.transientType))
+
+        manager.writeText("kept transcript")
+        XCTAssertEqual(pasteboard.string(forType: .string), "kept transcript")
+        XCTAssertNil(pasteboard.data(forType: ClipboardManager.transientType))
     }
 
     func testTextInsertionFallbackOrder() async throws {
@@ -141,6 +154,14 @@ final class StorageInsertionAndPrivacyTests: XCTestCase {
         let redacted = SecretRedactor.redact(source)
         XCTAssertFalse(redacted.contains(key))
         XCTAssertTrue(redacted.contains("<redacted>"))
+    }
+
+    func testBareKeyAndBareBearerTokenAreRedacted() {
+        let key = "sk-proj-abcdefghijklmnopqrstuvwxyz"
+        XCTAssertFalse(SecretRedactor.redact("error mentioning \(key) alone").contains(key))
+
+        let bearer = "Bearer some.opaque-token+value"
+        XCTAssertFalse(SecretRedactor.redact("header was \(bearer)").contains("some.opaque-token+value"))
     }
 }
 

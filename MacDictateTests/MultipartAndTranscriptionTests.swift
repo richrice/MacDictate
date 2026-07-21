@@ -4,11 +4,14 @@ import XCTest
 
 final class MockURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var handler: (@Sendable (URLRequest) throws -> (HTTPURLResponse, Data))?
+    /// When true, requests never complete, simulating an in-flight upload.
+    nonisolated(unsafe) static var hangs = false
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
+        if Self.hangs { return }
         guard let handler = Self.handler else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
             return
@@ -116,6 +119,73 @@ final class MultipartAndTranscriptionTests: XCTestCase {
         let result = try await service.transcribe(fileURL: file, configuration: configuration)
         XCTAssertEqual(result, "Use rg to locate the symbol.")
         XCTAssertEqual(counter.value, 2)
+    }
+
+    func testServerErrorIsRetriedOnce() async throws {
+        let counter = LockedCounter()
+        MockURLProtocol.handler = { request in
+            let attempt = counter.increment()
+            let status = attempt == 1 ? 503 : 200
+            let body = attempt == 1 ? Data("upstream overloaded".utf8) : Data("Recovered fine.".utf8)
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!,
+                body
+            )
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [MockURLProtocol.self]
+        let service = OpenAITranscriptionService(
+            session: URLSession(configuration: sessionConfiguration),
+            retryDelayNanoseconds: 1
+        )
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
+        try Data("fake wav".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let result = try await service.transcribe(fileURL: file, configuration: configuration)
+        XCTAssertEqual(result, "Recovered fine.")
+        XCTAssertEqual(counter.value, 2)
+    }
+
+    func testInFlightCancellationThrowsCancellationError() async throws {
+        MockURLProtocol.hangs = true
+        defer { MockURLProtocol.hangs = false }
+
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [MockURLProtocol.self]
+        let service = OpenAITranscriptionService(
+            session: URLSession(configuration: sessionConfiguration),
+            retryDelayNanoseconds: 1
+        )
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
+        try Data("fake wav".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let requestConfiguration = configuration
+        let transcription = Task {
+            try await service.transcribe(fileURL: file, configuration: requestConfiguration)
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        transcription.cancel()
+
+        do {
+            _ = try await transcription.value
+            XCTFail("Expected cancellation")
+        } catch {
+            XCTAssertTrue(error is CancellationError, "Cancellation surfaced as \(error) instead of CancellationError")
+        }
+    }
+
+    func testRetryAfterHeaderParsing() {
+        let fallback: UInt64 = 800_000_000
+        XCTAssertEqual(OpenAITranscriptionService.parseRetryDelay(header: "2", fallbackNanoseconds: fallback), 2_000_000_000)
+        XCTAssertEqual(OpenAITranscriptionService.parseRetryDelay(header: "120", fallbackNanoseconds: fallback), 5_000_000_000)
+        XCTAssertEqual(OpenAITranscriptionService.parseRetryDelay(header: "0", fallbackNanoseconds: fallback), 0)
+        XCTAssertEqual(OpenAITranscriptionService.parseRetryDelay(header: "Wed, 21 Oct 2026 07:28:00 GMT", fallbackNanoseconds: fallback), fallback)
+        XCTAssertEqual(OpenAITranscriptionService.parseRetryDelay(header: "-1", fallbackNanoseconds: fallback), fallback)
+        XCTAssertEqual(OpenAITranscriptionService.parseRetryDelay(header: nil, fallbackNanoseconds: fallback), fallback)
     }
 
     func testAuthenticationFailureIsNotRetried() async throws {

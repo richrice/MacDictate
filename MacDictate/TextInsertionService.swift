@@ -64,12 +64,17 @@ final class AccessibilityDirectInserter: DirectTextInserting {
         )
 
         if result == .success, let currentFocusedValue = focusedValue {
-            let candidate = unsafeDowncast(currentFocusedValue, to: AXUIElement.self)
-            var focusedPID = pid_t()
-            if AXUIElementGetPid(candidate, &focusedPID) != .success || focusedPID != target.processIdentifier {
-                // Activation is asynchronous; never insert into a different app's focused control.
+            if CFGetTypeID(currentFocusedValue) != AXUIElementGetTypeID() {
                 focusedValue = nil
                 result = .cannotComplete
+            } else {
+                let candidate = unsafeDowncast(currentFocusedValue, to: AXUIElement.self)
+                var focusedPID = pid_t()
+                if AXUIElementGetPid(candidate, &focusedPID) != .success || focusedPID != target.processIdentifier {
+                    // Activation is asynchronous; never insert into a different app's focused control.
+                    focusedValue = nil
+                    result = .cannotComplete
+                }
             }
         }
 
@@ -82,7 +87,7 @@ final class AccessibilityDirectInserter: DirectTextInserting {
             )
         }
 
-        guard result == .success, let focusedValue else {
+        guard result == .success, let focusedValue, CFGetTypeID(focusedValue) == AXUIElementGetTypeID() else {
             throw TextInsertionError.accessibilityRejected("Focused element lookup returned \(result.rawValue).")
         }
         let focusedElement = unsafeDowncast(focusedValue, to: AXUIElement.self)
@@ -111,7 +116,7 @@ final class ClipboardPasteInserter: PasteTextInserting {
     private let clipboard: ClipboardManaging
     private let pasteDelayNanoseconds: UInt64
 
-    init(clipboard: ClipboardManaging, pasteDelayNanoseconds: UInt64 = 350_000_000) {
+    init(clipboard: ClipboardManaging, pasteDelayNanoseconds: UInt64 = 700_000_000) {
         self.clipboard = clipboard
         self.pasteDelayNanoseconds = pasteDelayNanoseconds
     }
@@ -122,15 +127,19 @@ final class ClipboardPasteInserter: PasteTextInserting {
             throw TextInsertionError.targetUnavailable
         }
         let snapshot = clipboard.snapshot()
-        let transcriptChangeCount = clipboard.writeText(text)
+        let transcriptChangeCount = clipboard.writeText(text, transient: true)
         do {
             if !runningApplication.isActive {
                 runningApplication.activate(options: [])
                 try await Task.sleep(for: .milliseconds(120))
             }
+            // If the user still physically holds the hotkey modifiers, some apps
+            // combine them with the synthetic event and see ⌘⌥V instead of ⌘V.
+            try await waitForPhysicalModifierRelease()
 
-            guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: true),
-                  let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: false) else {
+            let source = CGEventSource(stateID: .privateState)
+            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else {
                 throw TextInsertionError.eventCreationFailed
             }
             keyDown.flags = .maskCommand
@@ -143,6 +152,14 @@ final class ClipboardPasteInserter: PasteTextInserting {
         } catch {
             _ = clipboard.restore(snapshot, ifChangeCountIs: transcriptChangeCount)
             throw error
+        }
+    }
+
+    private func waitForPhysicalModifierRelease() async throws {
+        let deadline = Date().addingTimeInterval(1.0)
+        while !NSEvent.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+              Date() < deadline {
+            try await Task.sleep(for: .milliseconds(25))
         }
     }
 }

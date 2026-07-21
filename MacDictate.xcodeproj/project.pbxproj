@@ -19,6 +19,7 @@
 		390778B7B81457CA4E4D846B /* Carbon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5B4CC1BB9284C5D9EBA68554 /* Carbon.framework */; };
 		41B56FF8932020628870B6A0 /* MultipartAndTranscriptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A29F3A54D22BEFEEDB1469E /* MultipartAndTranscriptionTests.swift */; };
 		4B8770661F2399F4736D2412 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA66AF8B5D028F384900315E /* SettingsView.swift */; };
+		4E631438D18188CFA77B420F /* CoordinatorWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B5A8BB43E85D857A1B0DF74 /* CoordinatorWorkflowTests.swift */; };
 		868043B0A73AB2CE5781F6DD /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F815C5A9419693A807248C6B /* AudioRecorder.swift */; };
 		86E3818D25681404F153B4BA /* StorageInsertionAndPrivacyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED6EE8861F18DA90EDA0F3B /* StorageInsertionAndPrivacyTests.swift */; };
 		A30444BFEED81AA42D43566B /* Diagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE21880EACD3E2D7D0F79ED1 /* Diagnostics.swift */; };
@@ -47,6 +48,7 @@
 /* Begin PBXFileReference section */
 		05F875BAC4152B52F435994D /* PermissionManagers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionManagers.swift; sourceTree = "<group>"; };
 		0A29F3A54D22BEFEEDB1469E /* MultipartAndTranscriptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultipartAndTranscriptionTests.swift; sourceTree = "<group>"; };
+		0B5A8BB43E85D857A1B0DF74 /* CoordinatorWorkflowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinatorWorkflowTests.swift; sourceTree = "<group>"; };
 		19A05D8A2E0CCFAEC92A7B28 /* ServiceManagement.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ServiceManagement.framework; path = System/Library/Frameworks/ServiceManagement.framework; sourceTree = SDKROOT; };
 		3ED6EE8861F18DA90EDA0F3B /* StorageInsertionAndPrivacyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageInsertionAndPrivacyTests.swift; sourceTree = "<group>"; };
 		42DFA35A4304445953E19C80 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
@@ -149,6 +151,7 @@
 			isa = PBXGroup;
 			children = (
 				46012278DED84F435E5FF482 /* AudioTapIsolationTests.swift */,
+				0B5A8BB43E85D857A1B0DF74 /* CoordinatorWorkflowTests.swift */,
 				0A29F3A54D22BEFEEDB1469E /* MultipartAndTranscriptionTests.swift */,
 				858782A062F50E08FA10011D /* StateMachineTests.swift */,
 				3ED6EE8861F18DA90EDA0F3B /* StorageInsertionAndPrivacyTests.swift */,
@@ -240,6 +243,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				027ECA044347A86A9058F8E3 /* AudioTapIsolationTests.swift in Sources */,
+				4E631438D18188CFA77B420F /* CoordinatorWorkflowTests.swift in Sources */,
 				41B56FF8932020628870B6A0 /* MultipartAndTranscriptionTests.swift in Sources */,
 				B5E4F870B7A448609BA950BC /* StateMachineTests.swift in Sources */,
 				86E3818D25681404F153B4BA /* StorageInsertionAndPrivacyTests.swift in Sources */,

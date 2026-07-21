@@ -88,7 +88,11 @@ final class OpenAITranscriptionService: TranscriptionService {
 
                 let error = Self.mapHTTPError(statusCode: http.statusCode, data: data)
                 if attempt == 0, TranscriptionError.shouldRetry(statusCode: http.statusCode) {
-                    try await Task.sleep(nanoseconds: retryDelayNanoseconds)
+                    let delay = Self.parseRetryDelay(
+                        header: http.value(forHTTPHeaderField: "Retry-After"),
+                        fallbackNanoseconds: retryDelayNanoseconds
+                    )
+                    try await Task.sleep(nanoseconds: delay)
                     continue
                 }
                 throw error
@@ -96,6 +100,9 @@ final class OpenAITranscriptionService: TranscriptionService {
                 throw CancellationError()
             } catch let error as TranscriptionError {
                 throw error
+            } catch let error as URLError where error.code == .cancelled {
+                // The surrounding task was cancelled; report it as a cancellation, not a network failure.
+                throw CancellationError()
             } catch let error as URLError {
                 throw TranscriptionError.network(error.localizedDescription)
             } catch {
@@ -144,6 +151,14 @@ final class OpenAITranscriptionService: TranscriptionService {
             .description ?? "No error details were returned."
     }
 
+    static func parseRetryDelay(header: String?, fallbackNanoseconds: UInt64) -> UInt64 {
+        guard let header = header?.trimmingCharacters(in: .whitespaces),
+              let seconds = Double(header), seconds >= 0 else {
+            return fallbackNanoseconds
+        }
+        return UInt64(min(seconds, 5) * 1_000_000_000)
+    }
+
     static func mapHTTPError(statusCode: Int, data: Data) -> TranscriptionError {
         let message = parseErrorMessage(data)
         switch statusCode {
@@ -163,7 +178,7 @@ final class OpenAITranscriptionService: TranscriptionService {
     private static func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 60
-        configuration.timeoutIntervalForResource = 75
+        configuration.timeoutIntervalForResource = 300
         configuration.waitsForConnectivity = false
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false

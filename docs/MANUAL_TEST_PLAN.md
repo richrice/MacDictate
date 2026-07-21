@@ -15,7 +15,7 @@ Before testing, build and verify automated tests:
 1. Remove any older test build from `/Applications`, quit all MacDictate processes, and build with `./scripts/build.sh`.
 2. Open `DerivedData/Build/Products/Debug/MacDictate.app`.
 3. Verify no normal Dock icon remains and a waveform icon appears in the menu bar.
-4. Open its menu. Verify current status, Start Dictation, Cancel Current Dictation, Settings, both permission links, and Quit are present.
+4. Open its menu. Verify current status, Start Dictation, Stop and Transcribe, Cancel Current Dictation, Settings, both permission links, and Quit are present. Stop and Transcribe is enabled only while recording; starting from the menu and choosing it should transcribe the captured audio.
 5. Verify status is **Ready**, Start is enabled, and Cancel is disabled.
 
 Expected: the app runs only as a menu-bar accessory, no recording begins, and no terminal/editor focus is stolen.
@@ -178,7 +178,7 @@ Expected: no overlap, crash, duplicate transcript, retained temporary file, or r
 
 1. Set Maximum duration to 10 seconds.
 2. Hold the shortcut longer than 10 seconds and verify recording automatically stops and transcribes once.
-3. Hold for one second in silence and verify a friendly silent/empty recording error with no API request where the audio threshold is met.
+3. Hold for one second in silence and verify a quiet "No speech detected" cancellation (no error sound, no Copy Last Error Details entry) with no API request where the audio threshold is met.
 4. Start with a removable USB/Bluetooth microphone selected in macOS Sound settings.
 5. Begin recording, disconnect or power off the microphone, and verify an interruption/device error.
 6. Select a working input in System Settings and complete another recording.

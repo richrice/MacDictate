@@ -9,6 +9,16 @@ struct MacDictateApp: App {
         Settings {
             EmptyView()
         }
+        .commands {
+            // Route ⌘, and the app menu's Settings item to the real settings
+            // window instead of the placeholder SwiftUI Settings scene.
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    NotificationCenter.default.post(name: .macDictateOpenSettings, object: nil)
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
+        }
     }
 }
 
@@ -48,6 +58,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Unit tests run inside this app as their test host; don't register the
+        // global hotkey or build the menu bar during a test run.
+        guard NSClassFromString("XCTestCase") == nil else { return }
         coordinator.start()
     }
 

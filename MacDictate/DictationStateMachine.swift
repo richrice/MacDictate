@@ -7,7 +7,7 @@ enum DictationPhase: Equatable, Sendable {
     case transcribing
     case inserting
     case completed(message: String)
-    case cancelled
+    case cancelled(message: String?)
     case failed(message: String)
 
     var statusText: String {
@@ -18,7 +18,7 @@ enum DictationPhase: Equatable, Sendable {
         case .transcribing: "Transcribing…"
         case .inserting: "Inserting text…"
         case let .completed(message): message
-        case .cancelled: "Cancelled"
+        case let .cancelled(message): message ?? "Cancelled"
         case let .failed(message): "Error: \(message)"
         }
     }
@@ -26,6 +26,15 @@ enum DictationPhase: Equatable, Sendable {
     var isActive: Bool {
         switch self {
         case .preparing, .recording, .transcribing, .inserting:
+            true
+        default:
+            false
+        }
+    }
+
+    var isTerminal: Bool {
+        switch self {
+        case .completed, .cancelled, .failed:
             true
         default:
             false

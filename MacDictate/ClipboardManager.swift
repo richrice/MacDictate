@@ -13,8 +13,14 @@ struct ClipboardSnapshot: Equatable, Sendable {
 protocol ClipboardManaging: AnyObject {
     var changeCount: Int { get }
     func snapshot() -> ClipboardSnapshot
-    @discardableResult func writeText(_ text: String) -> Int
+    @discardableResult func writeText(_ text: String, transient: Bool) -> Int
     @discardableResult func restore(_ snapshot: ClipboardSnapshot, ifChangeCountIs expectedChangeCount: Int) -> Bool
+}
+
+extension ClipboardManaging {
+    @discardableResult func writeText(_ text: String) -> Int {
+        writeText(text, transient: false)
+    }
 }
 
 @MainActor
@@ -40,10 +46,18 @@ final class ClipboardManager: ClipboardManaging {
         return ClipboardSnapshot(items: snapshots)
     }
 
+    /// The de-facto standard type clipboard managers honor to skip recording an entry.
+    static let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+
     @discardableResult
-    func writeText(_ text: String) -> Int {
+    func writeText(_ text: String, transient: Bool) -> Int {
         pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        let item = NSPasteboardItem()
+        item.setString(text, forType: .string)
+        if transient {
+            item.setData(Data(), forType: Self.transientType)
+        }
+        pasteboard.writeObjects([item])
         return pasteboard.changeCount
     }
 

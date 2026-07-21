@@ -59,12 +59,12 @@ The default model is `gpt-4o-mini-transcribe`. `gpt-4o-transcribe` is available 
 
 ## How it works
 
-The explicit workflow states are `idle`, `preparing`, `recording`, `transcribing`, `inserting`, `completed`, `cancelled`, and `failed`. A second recording cannot start while transcription or insertion is active.
+The explicit workflow states are `idle`, `preparing`, `recording`, `transcribing`, `inserting`, `completed`, `cancelled`, and `failed`. A second recording cannot start while transcription or insertion is active, but pressing the shortcut during the brief completion or error display starts a new dictation immediately. Errors stay on screen for three seconds; other terminal states clear after about a second. The menu can also start a recording; **Stop and Transcribe** finishes a menu-started recording deliberately.
 
 - A Carbon global hotkey provides both key-down and key-up events and consumes the shortcut before the foreground app receives it. Auto-repeat is ignored. Settings provides several modifier/Space alternatives and reports registration conflicts.
 - AVAudioEngine captures the system-selected input device. AVAudioConverter writes mono 16 kHz, 16-bit linear PCM in a temporary WAV file. A five-minute ceiling keeps the largest default upload near 9.6 MB before WAV overhead.
-- URLSession posts binary-safe multipart form data to `https://api.openai.com/v1/audio/transcriptions`. HTTP 429 and transient 5xx responses receive at most one delayed retry; authentication and other permanent 4xx failures are not retried.
-- The app first tries the Accessibility selected-text attribute. If that control rejects direct insertion, MacDictate snapshots every pasteboard item's representations, posts Command-V, and restores the snapshot only if the pasteboard change count still matches. A newer clipboard value is never overwritten.
+- URLSession posts binary-safe multipart form data to `https://api.openai.com/v1/audio/transcriptions`. HTTP 429 and transient 5xx responses receive at most one delayed retry, honoring a numeric `Retry-After` header up to five seconds; authentication and other permanent 4xx failures are not retried.
+- The app first tries the Accessibility selected-text attribute. If that control rejects direct insertion, MacDictate snapshots every pasteboard item's representations, posts Command-V from a private event source once physical modifier keys are released, and restores the snapshot only if the pasteboard change count still matches. A newer clipboard value is never overwritten. Temporary transcript writes are marked with `org.nspasteboard.TransientType` so clipboard managers skip them.
 - If Accessibility access is unavailable, the transcript stays on the clipboard and the HUD says to press Command-V manually.
 
 MacDictate never synthesizes Return or Enter.
@@ -132,7 +132,7 @@ MacDictate restores only if its temporary transcript is still the current pasteb
 - Quota/billing errors: check the OpenAI project's billing and limits.
 - HTTP 429: MacDictate retries once, then reports rate limiting.
 - DNS, TLS, or offline failures: restore network access and try a new dictation.
-- Empty/silent recordings and presses shorter than 250 ms are cancelled without an API request.
+- Presses shorter than 250 ms are cancelled without an API request. Silent recordings and empty transcription responses end with a quiet "No speech detected" message rather than an error.
 
 The menu exposes **Copy Last Error Details** after an error. The copied detail is redacted.
 
@@ -161,6 +161,6 @@ The Keychain item is independent of the app bundle; delete it explicitly with on
 
 ## Validation and architecture
 
-Automated coverage includes the state machine, short-press policy, off-main audio tap execution, multipart fields and binary content, authorization construction, plain text and JSON error parsing, retry policy through URLProtocol, a mock credential store, pasteboard restoration races, insertion fallback order, temporary-file cleanup, and secret redaction.
+Automated coverage includes the state machine, short-press policy, off-main audio tap execution, multipart fields and binary content, authorization construction, plain text and JSON error parsing, retry policy and in-flight cancellation through URLProtocol, `Retry-After` parsing, a mock credential store, pasteboard restoration races, the transient clipboard marker, insertion fallback order, temporary-file cleanup, and secret redaction. A coordinator suite drives the full dictation workflow against mocks: happy path, short press, cancel during transcription, silent and empty recordings, missing API key, and re-pressing the shortcut during the terminal-state display.
 
 Hardware, global input, permission prompts, and application-specific Accessibility behavior require manual testing. Follow [docs/MANUAL_TEST_PLAN.md](docs/MANUAL_TEST_PLAN.md).
