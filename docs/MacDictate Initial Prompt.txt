@@ -1,0 +1,627 @@
+Build a complete native macOS application named **MacDictate**.
+
+MacDictate is a menu-bar push-to-talk dictation utility designed for entering natural-language prompts into terminal-based coding agents such as Codex CLI and Claude Code.
+
+Do not merely describe the implementation. Create the project, source files, tests, build scripts, documentation, and a working application.
+
+## Primary workflow
+
+The expected workflow is:
+
+1. The user focuses Terminal, iTerm2, VS Code, Cursor, or another text-entry application.
+2. The user presses and holds a global hotkey.
+3. MacDictate begins recording the microphone without stealing focus.
+4. The user speaks a coding instruction.
+5. The user releases the hotkey.
+6. MacDictate stops recording and sends the audio to the OpenAI transcription API.
+7. MacDictate inserts the returned text at the current cursor position in the previously focused application.
+8. The user reviews the text and manually presses Return.
+
+The app must never automatically submit the prompt or simulate the Return key.
+
+## Technology requirements
+
+Build the application using:
+
+* Swift
+* SwiftUI for settings and normal UI
+* AppKit where required for menu-bar, floating panels, application focus, and paste handling
+* AVFoundation for microphone recording
+* Security framework for Keychain storage
+* Accessibility APIs and Core Graphics events for text insertion
+* URLSession for OpenAI API requests
+* XCTest for automated tests
+
+Target macOS 14 or newer.
+
+Do not use Electron, Node.js, Python, a local web server, or a browser wrapper.
+
+Avoid third-party dependencies unless they clearly improve reliability. Prefer native Apple frameworks. Explain any dependency before adding it.
+
+Use Swift concurrency with `async`/`await`. Keep UI work on `@MainActor`. Enable strict concurrency checking and resolve concurrency warnings rather than suppressing them.
+
+## Project generation
+
+Create a reproducible Xcode project.
+
+Use XcodeGen with a checked-in `project.yml` unless there is a compelling technical reason not to. Add:
+
+* `scripts/bootstrap.sh`
+* `scripts/build.sh`
+* `scripts/test.sh`
+* `scripts/run.sh`
+
+The bootstrap script may install or request XcodeGen when it is unavailable, but it must not make unrelated system changes.
+
+The project must build from the command line using `xcodebuild`.
+
+## Application architecture
+
+Use a clean, testable architecture with components similar to:
+
+* `AppCoordinator`
+* `DictationStateMachine`
+* `GlobalHotkeyManager`
+* `AudioRecorder`
+* `TranscriptionService`
+* `OpenAITranscriptionService`
+* `SecureCredentialStore`
+* `KeychainCredentialStore`
+* `TextInsertionService`
+* `ClipboardManager`
+* `AccessibilityPermissionManager`
+* `HUDController`
+* `SettingsStore`
+* `AppLogger`
+
+Define protocols around API, recording, Keychain, clipboard, and text insertion behavior so they can be mocked in tests.
+
+Use dependency injection rather than global singletons wherever practical.
+
+## Dictation state machine
+
+Implement explicit states:
+
+* idle
+* preparing
+* recording
+* transcribing
+* inserting
+* completed
+* cancelled
+* failed
+
+Prevent overlapping recordings and API requests.
+
+A new recording must not begin while the previous recording is being transcribed or inserted.
+
+Make state transitions observable by the menu-bar UI and floating HUD.
+
+## Menu-bar application
+
+MacDictate should run primarily as a menu-bar application.
+
+Set the app up as an accessory application so it does not remain in the Dock during normal operation.
+
+The menu-bar menu must include:
+
+* Current status
+* Start Dictation
+* Cancel Current Dictation
+* Settings
+* Open Accessibility Settings
+* Open Microphone Settings
+* Quit MacDictate
+
+The menu-bar icon should visibly change between:
+
+* idle
+* recording
+* transcribing
+* error
+
+Use SF Symbols where suitable.
+
+## Global push-to-talk hotkey
+
+The default hotkey should be:
+
+`Option + Space`
+
+Required behavior:
+
+* Key down starts recording.
+* Key up stops recording and begins transcription.
+* Auto-repeat must not create additional recording sessions.
+* A brief accidental press under 250 milliseconds should cancel instead of sending nearly empty audio.
+* The hotkey must work while another application is focused.
+* The application must not steal focus when the hotkey is used.
+* The underlying foreground application must not receive the hotkey keystroke.
+
+Prefer a native global-hotkey implementation that provides both key-down and key-up events.
+
+Use Carbon `RegisterEventHotKey` if it remains the most reliable native approach for press-and-release behavior. Isolate any legacy API usage inside `GlobalHotkeyManager` so it can later be replaced.
+
+Make the hotkey configurable in Settings after the basic fixed-hotkey version works. Detect and report registration conflicts.
+
+## Microphone recording
+
+Use `AVAudioEngine` to capture microphone audio.
+
+Record to a temporary WAV file suitable for the OpenAI transcription API.
+
+Preferred format:
+
+* mono
+* 16 kHz when practical
+* 16-bit linear PCM
+* WAV container
+
+Use `AVAudioConverter` when microphone hardware produces a different sample rate or channel count.
+
+Requirements:
+
+* Request microphone permission clearly.
+* Include a meaningful `NSMicrophoneUsageDescription`.
+* Handle missing input devices.
+* Handle device changes and recording interruptions.
+* Display the selected input device in Settings.
+* Allow the user to choose among available microphone input devices when feasible.
+* Delete temporary audio files immediately after success, cancellation, or terminal failure.
+* Do not retain an audio history by default.
+* Stop recordings automatically after five minutes.
+* Reject an empty or effectively silent recording with a friendly message.
+* Keep generated uploads comfortably below the API upload-size limit.
+
+Do not log raw audio data.
+
+## OpenAI API authentication
+
+Allow the user to enter an OpenAI API key in Settings.
+
+Store it only in macOS Keychain using the Security framework.
+
+Requirements:
+
+* Never store the key in `UserDefaults`.
+* Never write the key to a source file, plist, log, crash message, or environment dump.
+* Show the key as a secure field.
+* Provide Save, Replace, and Delete actions.
+* Display only a masked indication that a key is configured.
+* Keep the Keychain service and account identifiers centralized as constants.
+* Handle duplicate-item and item-not-found Keychain results correctly.
+* Avoid keeping the key in memory longer than needed for a request.
+* Redact authorization headers and secrets from all logging.
+
+Add a README warning that users must never commit API keys to Git.
+
+## OpenAI transcription request
+
+Use:
+
+`POST https://api.openai.com/v1/audio/transcriptions`
+
+Send a standards-compliant `multipart/form-data` request containing:
+
+* `file`: the WAV recording
+* `model`: selected transcription model
+* `response_format`: `text`
+* `prompt`: the configured transcription context
+* `language`: `en`, when the user has selected English rather than automatic language detection
+
+Default model:
+
+`gpt-4o-mini-transcribe`
+
+Also allow:
+
+`gpt-4o-transcribe`
+
+The model selection must be configurable in Settings. Do not hard-code model behavior throughout the app; centralize supported models.
+
+Create the multipart request in a dedicated, unit-tested builder. Use binary-safe `Data` construction and a randomly generated boundary.
+
+Use a reasonable request timeout, such as 60 seconds.
+
+Handle:
+
+* invalid API key
+* insufficient API balance or quota
+* rate limiting
+* network unavailable
+* DNS and TLS failures
+* server errors
+* malformed responses
+* empty transcription
+* request cancellation
+
+For HTTP 429 and transient 5xx errors, perform at most one automatic retry with a short exponential delay. Do not retry authentication or other permanent 4xx errors.
+
+Parse both plain-text responses and JSON error bodies.
+
+Provide user-friendly errors without hiding the underlying technical reason. Technical details may be available through a Copy Details button, but secrets must remain redacted.
+
+## Developer vocabulary prompt
+
+Provide this editable default transcription-context prompt:
+
+“Transcribe an English software-engineering instruction accurately. Preserve technical names, filenames, file paths, shell commands, command-line flags, URLs, version numbers, variable names, class names, acronyms, and quoted text. Relevant vocabulary includes Codex, Claude Code, Git, GitHub, Swift, SwiftUI, Xcode, Kotlin, Java, TypeScript, JavaScript, Python, Docker, npm, pnpm, Homebrew, Jira, SVN, ESP32, STM32, macOS, iOS, Android, API, JSON, YAML, SQL, SQLite, OpenRouter, Traxxas, and Firebase. Use normal punctuation and capitalization.”
+
+Allow the user to modify and reset this prompt in Settings.
+
+Do not falsely imply that the prompt guarantees exact spelling. It is context supplied to the transcription model.
+
+## Text insertion
+
+The transcript must be inserted into the application that was focused when recording began.
+
+Capture and retain the frontmost application identity at the beginning of dictation.
+
+Implement text insertion using this order:
+
+1. Attempt focused-element insertion using the macOS Accessibility API.
+2. When direct Accessibility insertion is unsupported or fails, use a clipboard-and-paste fallback.
+3. When Accessibility permission is unavailable, copy the transcript to the clipboard and notify the user to paste manually.
+
+For Accessibility insertion:
+
+* Use `AXUIElementCreateSystemWide`.
+* Obtain the focused UI element.
+* Attempt insertion through the appropriate selected-text attribute.
+* Preserve existing selected-text behavior where possible.
+* Handle applications that reject setting accessibility attributes.
+
+For clipboard fallback:
+
+1. Snapshot all existing pasteboard items and their available representations.
+2. Put the transcript on the general pasteboard.
+3. Generate a Command-V key event using `CGEvent`.
+4. Wait long enough for the foreground application to consume the paste.
+5. Restore the previous clipboard only when the pasteboard has not subsequently been changed by the user or another application.
+
+Do not overwrite a newer user clipboard value during restoration.
+
+Do not simulate Return, Enter, or any command that would submit the prompt.
+
+Test text insertion in at least:
+
+* Apple Terminal
+* iTerm2 when available
+* VS Code
+* a standard SwiftUI `TextEditor`
+* a browser text area
+
+Document any application-specific limitations.
+
+## Accessibility permission
+
+On first use of automatic insertion:
+
+* Check `AXIsProcessTrustedWithOptions`.
+* Explain why Accessibility permission is needed.
+* Trigger the standard macOS permission flow.
+* Provide a button that opens the correct Privacy & Security settings pane.
+* Continue to function in copy-only mode when permission is denied.
+
+Do not repeatedly nag the user after denial.
+
+Make the permission status visible in Settings.
+
+## Floating status HUD
+
+Show a small non-activating floating HUD while dictation is active.
+
+It must not steal keyboard focus.
+
+Display:
+
+* microphone indicator while recording
+* elapsed recording time
+* “Transcribing…” during the request
+* a short success indication
+* a concise failure indication
+
+Place it near the lower center of the active screen.
+
+Use an `NSPanel` configured to avoid activation and avoid appearing in Mission Control or the Dock.
+
+Allow the HUD to be disabled in Settings.
+
+Do not display the live transcript in the HUD for the MVP.
+
+## Sounds and feedback
+
+Provide optional subtle sounds for:
+
+* recording started
+* recording stopped
+* transcription completed
+* error
+
+Default sounds should be unobtrusive.
+
+Add settings to disable sounds.
+
+Do not play a loud sound on every API response.
+
+## Settings window
+
+Create a polished settings window with sections for:
+
+### General
+
+* Launch at login
+* Show HUD
+* Play sounds
+* Automatically insert transcription
+* Copy transcription to clipboard
+* Maximum recording duration
+
+### Hotkey
+
+* Current push-to-talk shortcut
+* Change shortcut
+* Restore default
+* Conflict status
+
+### OpenAI
+
+* Secure API-key field
+* Save or replace API key
+* Delete API key
+* Model selector
+* Language selector
+* Editable transcription-context prompt
+* Reset prompt to default
+
+### Permissions
+
+* Microphone permission status
+* Accessibility permission status
+* Open relevant System Settings buttons
+
+### Diagnostics
+
+* Application version
+* Build number
+* Copy redacted diagnostics
+* Open logs folder
+* Enable debug logging
+
+Do not include the API key, raw audio, or transcript contents in diagnostics.
+
+Use `SMAppService` for launch-at-login functionality when available.
+
+## Privacy behavior
+
+Use privacy-preserving defaults:
+
+* No analytics
+* No telemetry
+* No crash-reporting SDK
+* No transcription history
+* No audio history
+* No automatic prompt submission
+* No background recording
+* No recording unless the hotkey is actively held
+* No API request until the hotkey is released
+* No recording indicator hidden from the user
+
+Add a short Privacy section to the README explaining:
+
+* Audio is sent to the configured OpenAI API for transcription.
+* Temporary recordings are deleted.
+* The API key is stored in Keychain.
+* The app does not collect analytics.
+* The user is responsible for API costs and key security.
+
+## Error handling and resilience
+
+The app must remain usable after any failure.
+
+After a failure:
+
+* stop and release audio resources
+* remove microphone taps
+* cancel outstanding tasks when appropriate
+* delete temporary files
+* restore the state machine to idle
+* preserve clipboard contents
+* allow another dictation attempt without restarting the app
+
+Handle rapid press-release sequences and repeated hotkey presses safely.
+
+Do not use `fatalError` for recoverable runtime conditions.
+
+## Logging
+
+Use `os.Logger`.
+
+Create logging categories such as:
+
+* lifecycle
+* hotkey
+* audio
+* transcription
+* insertion
+* permissions
+* settings
+
+Use privacy annotations appropriately.
+
+Never log:
+
+* API keys
+* authorization headers
+* complete transcripts
+* microphone audio
+* clipboard contents
+
+A debug log may record transcript length and audio duration, but not content.
+
+## Automated tests
+
+Add meaningful XCTest coverage.
+
+At minimum, test:
+
+1. Valid dictation state transitions.
+2. Invalid and duplicate transition prevention.
+3. Very short recording cancellation.
+4. Multipart request construction.
+5. Required multipart fields.
+6. Correct authorization-header construction without exposing it in test output.
+7. Successful plain-text transcription parsing.
+8. JSON error parsing.
+9. Retry classification for 429 and 5xx responses.
+10. No retry for authentication failures.
+11. Keychain protocol behavior using an in-memory mock.
+12. Clipboard restoration when unchanged.
+13. Clipboard non-restoration when another process has changed it.
+14. Text insertion fallback order.
+15. Temporary-file deletion on success, cancellation, and failure.
+16. API-key redaction in diagnostic output.
+
+Use URLProtocol-based networking mocks rather than making real API calls during unit tests.
+
+## Manual validation checklist
+
+Create `docs/MANUAL_TEST_PLAN.md` containing exact steps for validating:
+
+* first launch
+* microphone permission
+* Accessibility permission
+* API-key entry
+* hotkey press and release
+* successful transcription
+* insertion into Terminal
+* insertion into Codex CLI
+* insertion into Claude Code
+* clipboard preservation
+* rejected API key
+* no network
+* rate limiting
+* cancellation
+* rapid repeated hotkeys
+* microphone disconnection
+* application relaunch
+* launch at login
+
+## Build and run documentation
+
+Create a complete `README.md` that explains:
+
+* application purpose
+* prerequisites
+* Xcode and macOS requirements
+* how to bootstrap
+* how to build
+* how to run
+* how to run tests
+* how to grant permissions
+* how to configure an OpenAI API key
+* how to change the model
+* how the text-insertion fallback works
+* privacy behavior
+* troubleshooting
+* how to completely remove stored credentials
+* how to uninstall the application
+
+Include commands that can be copied directly.
+
+## Git hygiene
+
+Create:
+
+* `.gitignore`
+* no committed build output
+* no API keys
+* no temporary audio files
+* no user-specific Xcode state
+* no derived data
+
+Initialize a Git repository if one does not already exist.
+
+Make logical commits after major working milestones when repository access permits.
+
+## Implementation phases
+
+Work in these phases and keep each phase buildable:
+
+### Phase 1: Application shell
+
+* menu-bar application
+* settings window
+* observable state machine
+* logging
+* basic build scripts
+
+### Phase 2: Audio
+
+* microphone permission
+* push-to-talk hotkey
+* WAV recording
+* temporary-file cleanup
+* recording HUD
+
+### Phase 3: API
+
+* Keychain storage
+* multipart request builder
+* OpenAI transcription service
+* model and context settings
+* error handling
+
+### Phase 4: Insertion
+
+* Accessibility permission
+* focused-element insertion
+* clipboard fallback
+* safe clipboard restoration
+
+### Phase 5: Polish
+
+* configurable hotkey
+* sounds
+* launch at login
+* diagnostics
+* tests
+* documentation
+
+After every phase:
+
+1. Build the project.
+2. Run all existing tests.
+3. Fix warnings and errors.
+4. Summarize what was completed.
+5. Continue to the next phase without waiting unless a true external blocker exists.
+
+## MVP completion criteria
+
+The MVP is complete only when all of the following work:
+
+* The app launches as a menu-bar utility.
+* The OpenAI API key can be saved to and loaded from Keychain.
+* Holding Option-Space records speech.
+* Releasing Option-Space stops recording.
+* The recording is sent to `gpt-4o-mini-transcribe`.
+* The returned text is inserted into the previously focused application.
+* The app does not press Return.
+* Temporary audio is deleted.
+* Clipboard contents are preserved when possible.
+* Errors are visible and recoverable.
+* The project builds from the command line.
+* Automated tests pass.
+* The README contains complete setup instructions.
+
+## Coding expectations
+
+Favor simple, maintainable code over clever abstractions.
+
+Do not leave placeholder implementations, pseudocode, empty methods, or TODO comments for MVP requirements.
+
+Do not claim that functionality works without building and testing it.
+
+When an operating-system permission or hardware behavior cannot be automated, implement everything possible and clearly identify the exact manual validation step.
+
+Begin by inspecting the current directory and installed development tools. Then create the project and implement Phase 1.
