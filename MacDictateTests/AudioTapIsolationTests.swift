@@ -42,5 +42,34 @@ final class AudioTapIsolationTests: XCTestCase {
         XCTAssertEqual(completed.wait(timeout: .now() + 2), .success)
         XCTAssertEqual(counter.value, 1)
     }
+
+    func testWriterRebuildsConverterWhenInputFormatChanges() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MacDictate-format-change-\(UUID().uuidString)")
+            .appendingPathExtension("wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        guard let initialFormat = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1),
+              let changedFormat = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2),
+              let buffer = AVAudioPCMBuffer(pcmFormat: changedFormat, frameCapacity: 4_410) else {
+            XCTFail("Could not create test formats")
+            return
+        }
+        buffer.frameLength = 4_410
+        for channel in 0..<2 {
+            let samples = buffer.floatChannelData![channel]
+            for index in 0..<Int(buffer.frameLength) { samples[index] = 0.25 }
+        }
+
+        // The writer was configured for 48 kHz mono; a device switch delivers
+        // 44.1 kHz stereo. It must rebuild its converter and keep recording.
+        let writer = try LockedAudioWriter(url: url, inputFormat: initialFormat)
+        writer.append(buffer)
+        let result = try writer.finish()
+
+        XCTAssertGreaterThan(result.frames, 0)
+        XCTAssertEqual(result.peak, 0.25, accuracy: 0.01)
+        XCTAssertGreaterThan(result.rms, 0.1)
+    }
 }
 

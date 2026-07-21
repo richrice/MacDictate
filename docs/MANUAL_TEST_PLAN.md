@@ -180,8 +180,9 @@ Expected: no overlap, crash, duplicate transcript, retained temporary file, or r
 2. Hold the shortcut longer than 10 seconds and verify recording automatically stops and transcribes once.
 3. Hold for one second in silence and verify a quiet "No speech detected" cancellation (no error sound, no Copy Last Error Details entry) with no API request where the audio threshold is met.
 4. Start with a removable USB/Bluetooth microphone selected in macOS Sound settings.
-5. Begin recording, disconnect or power off the microphone, and verify an interruption/device error.
+5. Begin recording, disconnect or power off the microphone, and verify either seamless recovery onto the fallback input or an interruption/device error—never a hallucinated transcript.
 6. Select a working input in System Settings and complete another recording.
+7. With Bluetooth headphones connected, verify the first dictation after launch succeeds: benign input configuration changes at engine start (for example a hands-free profile switch) must recover silently rather than showing "The microphone could not start."
 
 Expected: taps and engine resources are released and the app recovers without relaunch.
 

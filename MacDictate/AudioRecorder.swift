@@ -57,7 +57,7 @@ protocol AudioRecording: AnyObject {
 
 final class LockedAudioWriter: @unchecked Sendable {
     private let lock = NSLock()
-    private let converter: AVAudioConverter
+    private var converter: AVAudioConverter
     private var file: AVAudioFile?
     private let outputFormat: AVAudioFormat
     private(set) var frameCount: AVAudioFramePosition = 0
@@ -93,6 +93,16 @@ final class LockedAudioWriter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard firstError == nil, let file else { return }
+
+        // The input format can change mid-recording (device switch, sample-rate
+        // renegotiation); rebuild the converter so the recording continues.
+        if input.format != converter.inputFormat {
+            guard let newConverter = AVAudioConverter(from: input.format, to: outputFormat) else {
+                firstError = AudioRecorderError.conversionFailed("The microphone changed to an unsupported format.")
+                return
+            }
+            converter = newConverter
+        }
 
         updatePeak(from: input)
         let ratio = outputFormat.sampleRate / input.format.sampleRate
@@ -197,9 +207,35 @@ final class AudioRecorder: AudioRecording {
             queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.writer != nil else { return }
-                self.onInterruption?("The microphone configuration changed during recording.")
+                self?.recoverFromConfigurationChange()
             }
+        }
+    }
+
+    /// AVAudioEngine stops itself when the input configuration changes, and the
+    /// notification often fires benignly right at startup (Bluetooth profile
+    /// switches, sample-rate renegotiation). Re-tap the input with its current
+    /// format and restart; only report an interruption if that fails.
+    private func recoverFromConfigurationChange() {
+        guard let audioWriter = writer else { return }
+        let inputNode = engine.inputNode
+        inputNode.removeTap(onBus: 0)
+        let format = inputNode.inputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            onInterruption?("The microphone configuration changed during recording.")
+            return
+        }
+        let tapBlock = AudioTapBlockFactory.make { [audioWriter] buffer in
+            audioWriter.append(buffer)
+        }
+        inputNode.installTap(onBus: 0, bufferSize: 2_048, format: format, block: tapBlock)
+        engine.prepare()
+        do {
+            try engine.start()
+            AppLogger.audio.info("Recovered from an input configuration change during recording")
+        } catch {
+            inputNode.removeTap(onBus: 0)
+            onInterruption?("The microphone configuration changed during recording.")
         }
     }
 
