@@ -60,6 +60,17 @@ open MacDictate.xcodeproj
 
 Select the `MacDictate` scheme and the **My Mac** destination. Builds are signed with the development team configured in `project.yml` (`DEVELOPMENT_TEAM`), which keeps Microphone and Accessibility grants stable across rebuilds. Set your own team ID there (or clear it and pass `CODE_SIGNING_ALLOWED=NO` for unsigned builds). Distribution outside your own machines requires Developer ID signing configured in Xcode.
 
+## Releasing
+
+Tag a version and push it; GitHub Actions tests, builds, packages, and publishes the release automatically:
+
+```sh
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+The app version comes from the tag (the `MARKETING_VERSION` in `project.yml` is overridden at build time), and the release notes combine a fixed install header with GitHub's generated changelog. CI builds are unsigned, so the quarantine step in the install section applies to downloads. Run the workflow manually from the Actions tab for a dry run that uploads the zip as an artifact without publishing.
+
 ## First-time setup
 
 1. Run MacDictate. It is an accessory application: look for the waveform icon in the menu bar rather than the Dock.
