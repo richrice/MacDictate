@@ -1,0 +1,150 @@
+import Foundation
+import XCTest
+@testable import MacDictate
+
+final class MockURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var handler: (@Sendable (URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let handler = Self.handler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        do {
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = 0
+    func increment() -> Int { lock.withLock { storage += 1; return storage } }
+    var value: Int { lock.withLock { storage } }
+}
+
+final class MultipartAndTranscriptionTests: XCTestCase {
+    private let configuration = TranscriptionConfiguration(
+        apiKey: "test-secret-key",
+        model: .mini,
+        language: .english,
+        contextPrompt: "developer context"
+    )
+
+    func testMultipartConstructionContainsBinaryFileAndRequiredFields() {
+        var builder = MultipartFormDataBuilder(boundary: "TEST-BOUNDARY")
+        let binary = Data([0x00, 0xFF, 0x41, 0x0D, 0x0A])
+        builder.addFile(name: "file", filename: "audio.wav", mimeType: "audio/wav", contents: binary)
+        builder.addField(name: "model", value: "gpt-4o-mini-transcribe")
+        builder.addField(name: "response_format", value: "text")
+        builder.addField(name: "prompt", value: "developer context")
+        builder.addField(name: "language", value: "en")
+        let body = builder.finalize()
+
+        XCTAssertTrue(body.contains(binary))
+        let text = String(decoding: body, as: UTF8.self)
+        XCTAssertTrue(text.contains("name=\"file\"; filename=\"audio.wav\""))
+        XCTAssertTrue(text.contains("name=\"model\"\r\n\r\ngpt-4o-mini-transcribe"))
+        XCTAssertTrue(text.contains("name=\"response_format\"\r\n\r\ntext"))
+        XCTAssertTrue(text.contains("name=\"prompt\"\r\n\r\ndeveloper context"))
+        XCTAssertTrue(text.contains("name=\"language\"\r\n\r\nen"))
+        XCTAssertTrue(text.hasSuffix("--TEST-BOUNDARY--\r\n"))
+    }
+
+    func testAuthorizationHeaderConstruction() {
+        let service = OpenAITranscriptionService()
+        let request = service.makeRequest(fileData: Data("wav".utf8), configuration: configuration)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer " + configuration.apiKey)
+        XCTAssertEqual(request.httpMethod, "POST")
+    }
+
+    func testSuccessfulPlainTextParsing() throws {
+        XCTAssertEqual(try OpenAITranscriptionService.parseSuccessfulResponse(Data("  Fix AppCoordinator.swift.\n".utf8)), "Fix AppCoordinator.swift.")
+        XCTAssertThrowsError(try OpenAITranscriptionService.parseSuccessfulResponse(Data(" \n".utf8)))
+    }
+
+    func testJSONErrorParsing() {
+        let data = Data(#"{"error":{"message":"Incorrect API key","type":"invalid_request_error","code":"invalid_api_key"}}"#.utf8)
+        XCTAssertEqual(OpenAITranscriptionService.parseErrorMessage(data), "Incorrect API key")
+        XCTAssertEqual(
+            OpenAITranscriptionService.mapHTTPError(statusCode: 401, data: data),
+            .invalidAPIKey("Incorrect API key")
+        )
+    }
+
+    func testRetryClassification() {
+        XCTAssertTrue(TranscriptionError.shouldRetry(statusCode: 429))
+        XCTAssertTrue(TranscriptionError.shouldRetry(statusCode: 500))
+        XCTAssertTrue(TranscriptionError.shouldRetry(statusCode: 503))
+        XCTAssertFalse(TranscriptionError.shouldRetry(statusCode: 401))
+        XCTAssertFalse(TranscriptionError.shouldRetry(statusCode: 400))
+    }
+
+    func testURLProtocolSuccessAndOneRetry() async throws {
+        let counter = LockedCounter()
+        MockURLProtocol.handler = { request in
+            let attempt = counter.increment()
+            let status = attempt == 1 ? 429 : 200
+            let body = attempt == 1
+                ? Data(#"{"error":{"message":"slow down"}}"#.utf8)
+                : Data("Use rg to locate the symbol.".utf8)
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!,
+                body
+            )
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: sessionConfiguration)
+        let service = OpenAITranscriptionService(session: session, retryDelayNanoseconds: 1)
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
+        try Data("fake wav".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let result = try await service.transcribe(fileURL: file, configuration: configuration)
+        XCTAssertEqual(result, "Use rg to locate the symbol.")
+        XCTAssertEqual(counter.value, 2)
+    }
+
+    func testAuthenticationFailureIsNotRetried() async throws {
+        let counter = LockedCounter()
+        MockURLProtocol.handler = { request in
+            _ = counter.increment()
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!,
+                Data(#"{"error":{"message":"bad key"}}"#.utf8)
+            )
+        }
+        defer { MockURLProtocol.handler = nil }
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [MockURLProtocol.self]
+        let service = OpenAITranscriptionService(
+            session: URLSession(configuration: sessionConfiguration),
+            retryDelayNanoseconds: 1
+        )
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
+        try Data("fake wav".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        do {
+            _ = try await service.transcribe(fileURL: file, configuration: configuration)
+            XCTFail("Expected authentication failure")
+        } catch let error as TranscriptionError {
+            XCTAssertEqual(error, .invalidAPIKey("bad key"))
+        }
+        XCTAssertEqual(counter.value, 1)
+    }
+}
+

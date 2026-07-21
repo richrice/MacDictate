@@ -1,0 +1,424 @@
+import AppKit
+import Combine
+import Foundation
+
+enum DictationCoordinatorError: LocalizedError, Equatable {
+    case noTargetApplication
+    case recordingTooShort
+    case silentRecording
+
+    var errorDescription: String? {
+        switch self {
+        case .noTargetApplication: "Focus the application where you want text inserted, then try again."
+        case .recordingTooShort: "The shortcut was released too quickly; no audio was sent."
+        case .silentRecording: "The recording was silent or empty; no audio was sent."
+        }
+    }
+}
+
+enum RecordingPolicy {
+    static let minimumDuration: TimeInterval = 0.25
+
+    static func shouldTranscribe(elapsed: TimeInterval) -> Bool {
+        elapsed >= minimumDuration
+    }
+}
+
+@MainActor
+final class AppCoordinator: NSObject {
+    let settings: SettingsStore
+    let stateMachine: DictationStateMachine
+    let hotkeyManager: GlobalHotkeyManager
+    let microphonePermission: MicrophonePermissionManager
+    let accessibilityPermission: AccessibilityPermissionManager
+    let launchAtLogin: LaunchAtLoginManager
+
+    private let audioRecorder: AudioRecording
+    private let transcriptionService: TranscriptionService
+    private let credentialStore: SecureCredentialStore
+    private let insertionService: TextInsertionService
+    private let fileCleaner: TemporaryFileCleaning
+
+    private var statusItem: NSStatusItem?
+    private var statusMenuItem: NSMenuItem?
+    private var startMenuItem: NSMenuItem?
+    private var cancelMenuItem: NSMenuItem?
+    private var copyErrorMenuItem: NSMenuItem?
+    private var settingsWindowController: SettingsWindowController?
+    private var hudController: HUDController?
+    private var stateCancellable: AnyCancellable?
+    private var hotkeyCancellable: AnyCancellable?
+    private var workspaceObserver: NSObjectProtocol?
+    private var workflowTask: Task<Void, Never>?
+    private var maximumDurationTask: Task<Void, Never>?
+    private var capturedTarget: TargetApplication?
+    private var lastExternalTarget: TargetApplication?
+    private var lastErrorDetails: String?
+
+    init(
+        settings: SettingsStore,
+        stateMachine: DictationStateMachine,
+        hotkeyManager: GlobalHotkeyManager,
+        microphonePermission: MicrophonePermissionManager,
+        accessibilityPermission: AccessibilityPermissionManager,
+        launchAtLogin: LaunchAtLoginManager,
+        audioRecorder: AudioRecording,
+        transcriptionService: TranscriptionService,
+        credentialStore: SecureCredentialStore,
+        insertionService: TextInsertionService,
+        fileCleaner: TemporaryFileCleaning = TemporaryFileCleaner()
+    ) {
+        self.settings = settings
+        self.stateMachine = stateMachine
+        self.hotkeyManager = hotkeyManager
+        self.microphonePermission = microphonePermission
+        self.accessibilityPermission = accessibilityPermission
+        self.launchAtLogin = launchAtLogin
+        self.audioRecorder = audioRecorder
+        self.transcriptionService = transcriptionService
+        self.credentialStore = credentialStore
+        self.insertionService = insertionService
+        self.fileCleaner = fileCleaner
+        super.init()
+    }
+
+    func start() {
+        NSApp.setActivationPolicy(.accessory)
+        configureMenuBar()
+        configureSettingsWindow()
+        hudController = HUDController(stateMachine: stateMachine, settings: settings)
+
+        hotkeyManager.onKeyDown = { [weak self] in self?.beginDictation() }
+        hotkeyManager.onKeyUp = { [weak self] in self?.finishDictation() }
+        audioRecorder.onInterruption = { [weak self] reason in
+            self?.fail(AudioRecorderError.engineFailed(reason))
+        }
+        hotkeyManager.register(settings.hotkey)
+
+        hotkeyCancellable = settings.$hotkey
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] shortcut in
+                MainActor.assumeIsolated { self?.hotkeyManager.register(shortcut) }
+            }
+        stateCancellable = stateMachine.$state.sink { [weak self] state in
+            MainActor.assumeIsolated { self?.updateMenu(for: state) }
+        }
+
+        observeApplicationActivation()
+        rememberFrontmostApplication()
+        AppLogger.lifecycle.info("MacDictate launched")
+    }
+
+    func beginDictation() {
+        guard stateMachine.state == .idle else {
+            AppLogger.hotkey.info("Ignoring hotkey because a dictation workflow is active")
+            return
+        }
+        do {
+            capturedTarget = try captureTargetApplication()
+            lastErrorDetails = nil
+            try stateMachine.transition(to: .preparing)
+        } catch {
+            fail(error)
+            return
+        }
+
+        workflowTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.audioRecorder.prepare()
+                try Task.checkCancellation()
+                try self.audioRecorder.start()
+                try self.stateMachine.transition(to: .recording(startedAt: Date()))
+                self.playSound(named: "Pop")
+                self.scheduleMaximumDuration()
+            } catch is CancellationError {
+                self.cancelActive(showMessage: true)
+            } catch {
+                self.fail(error)
+            }
+        }
+    }
+
+    func finishDictation() {
+        switch stateMachine.state {
+        case .preparing:
+            cancelActive(showMessage: true)
+        case let .recording(startedAt):
+            finishRecording(elapsed: Date().timeIntervalSince(startedAt), enforceMinimum: true)
+        default:
+            break
+        }
+    }
+
+    func cancelActive(showMessage: Bool = true) {
+        guard stateMachine.state.isActive else { return }
+        workflowTask?.cancel()
+        workflowTask = nil
+        maximumDurationTask?.cancel()
+        maximumDurationTask = nil
+        audioRecorder.cancel()
+        do {
+            try stateMachine.transition(to: .cancelled)
+            if showMessage { AppLogger.lifecycle.info("Dictation cancelled") }
+            scheduleReset()
+        } catch {
+            AppLogger.lifecycle.error("Cancellation state error: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func finishRecording(elapsed: TimeInterval, enforceMinimum: Bool) {
+        maximumDurationTask?.cancel()
+        maximumDurationTask = nil
+        if enforceMinimum, !RecordingPolicy.shouldTranscribe(elapsed: elapsed) {
+            audioRecorder.cancel()
+            do {
+                try stateMachine.transition(to: .cancelled)
+                scheduleReset()
+            } catch {
+                fail(error)
+            }
+            return
+        }
+
+        do {
+            let recordedAudio = try audioRecorder.stop()
+            playSound(named: "Tink")
+            guard !recordedAudio.isEffectivelySilent else {
+                fileCleaner.delete(recordedAudio.fileURL)
+                throw DictationCoordinatorError.silentRecording
+            }
+            guard let target = capturedTarget else {
+                fileCleaner.delete(recordedAudio.fileURL)
+                throw DictationCoordinatorError.noTargetApplication
+            }
+            try stateMachine.transition(to: .transcribing)
+            workflowTask = Task { [weak self] in
+                await self?.transcribeAndInsert(recordedAudio, target: target)
+            }
+        } catch {
+            fail(error)
+        }
+    }
+
+    private func transcribeAndInsert(_ recording: RecordedAudio, target: TargetApplication) async {
+        defer { fileCleaner.delete(recording.fileURL) }
+        do {
+            guard let key = try credentialStore.load(), !key.isEmpty else {
+                throw TranscriptionError.missingAPIKey
+            }
+            let configuration = TranscriptionConfiguration(
+                apiKey: key,
+                model: settings.model,
+                language: settings.language,
+                contextPrompt: settings.transcriptionPrompt
+            )
+            let transcript = try await transcriptionService.transcribe(
+                fileURL: recording.fileURL,
+                configuration: configuration
+            )
+            try Task.checkCancellation()
+
+            var completionMessage = "Transcription complete"
+            if settings.automaticallyInsert {
+                try stateMachine.transition(to: .inserting)
+                let outcome = try await insertionService.insert(transcript, target: target)
+                switch outcome {
+                case .accessibility, .clipboardPaste:
+                    completionMessage = "Text inserted"
+                case .copiedForManualPaste:
+                    completionMessage = "Copied—press ⌘V to paste"
+                }
+            } else {
+                insertionService.copy(transcript)
+                completionMessage = "Copied—press ⌘V to paste"
+            }
+
+            if settings.copyToClipboard {
+                insertionService.copy(transcript)
+                completionMessage = settings.automaticallyInsert ? "Inserted and copied" : completionMessage
+            }
+            try stateMachine.transition(to: .completed(message: completionMessage))
+            playSound(named: "Glass")
+            if settings.debugLogging {
+                AppLogger.transcription.debug("Transcription completed; audio duration \(recording.duration, privacy: .public)s, transcript length \(transcript.count, privacy: .public)")
+            }
+            scheduleReset()
+        } catch is CancellationError {
+            if stateMachine.state.isActive { cancelActive(showMessage: false) }
+        } catch {
+            fail(error)
+        }
+    }
+
+    private func scheduleMaximumDuration() {
+        maximumDurationTask?.cancel()
+        let duration = settings.maximumRecordingDuration
+        maximumDurationTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(duration))
+            guard !Task.isCancelled, let self else { return }
+            if case let .recording(startedAt) = self.stateMachine.state {
+                self.finishRecording(elapsed: Date().timeIntervalSince(startedAt), enforceMinimum: false)
+            }
+        }
+    }
+
+    private func fail(_ error: Error) {
+        workflowTask?.cancel()
+        workflowTask = nil
+        maximumDurationTask?.cancel()
+        maximumDurationTask = nil
+        audioRecorder.cancel()
+        let friendly = error.localizedDescription
+        lastErrorDetails = SecretRedactor.redact(String(reflecting: error))
+        AppLogger.lifecycle.error("Dictation failed: \(friendly, privacy: .public)")
+
+        if stateMachine.state.isActive {
+            try? stateMachine.transition(to: .failed(message: friendly))
+        } else if case .idle = stateMachine.state {
+            // A target-capture failure occurs before preparing can begin.
+            try? stateMachine.transition(to: .preparing)
+            try? stateMachine.transition(to: .failed(message: friendly))
+        }
+        playSound(named: "Basso")
+        scheduleReset()
+    }
+
+    private func scheduleReset() {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.3))
+            guard !Task.isCancelled else { return }
+            self?.stateMachine.resetAfterTerminalState()
+            self?.capturedTarget = nil
+        }
+    }
+
+    private func playSound(named name: String) {
+        guard settings.playSounds else { return }
+        NSSound(named: NSSound.Name(name))?.play()
+    }
+
+    private func captureTargetApplication() throws -> TargetApplication {
+        rememberFrontmostApplication()
+        guard let target = lastExternalTarget else { throw DictationCoordinatorError.noTargetApplication }
+        return target
+    }
+
+    private func rememberFrontmostApplication() {
+        guard let application = NSWorkspace.shared.frontmostApplication,
+              application.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+        lastExternalTarget = TargetApplication(
+            processIdentifier: application.processIdentifier,
+            bundleIdentifier: application.bundleIdentifier,
+            name: application.localizedName ?? "Unknown application"
+        )
+    }
+
+    private func observeApplicationActivation() {
+        workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+            MainActor.assumeIsolated {
+                guard application.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+                self?.lastExternalTarget = TargetApplication(
+                    processIdentifier: application.processIdentifier,
+                    bundleIdentifier: application.bundleIdentifier,
+                    name: application.localizedName ?? "Unknown application"
+                )
+            }
+        }
+    }
+
+    private func configureMenuBar() {
+        let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "MacDictate")
+        statusItem.button?.toolTip = "MacDictate — Ready"
+        let menu = NSMenu()
+
+        let status = NSMenuItem(title: "Ready", action: nil, keyEquivalent: "")
+        status.isEnabled = false
+        menu.addItem(status)
+        menu.addItem(.separator())
+
+        let start = NSMenuItem(title: "Start Dictation", action: #selector(startFromMenu), keyEquivalent: "")
+        start.target = self
+        menu.addItem(start)
+        let cancel = NSMenuItem(title: "Cancel Current Dictation", action: #selector(cancelFromMenu), keyEquivalent: "")
+        cancel.target = self
+        cancel.isEnabled = false
+        menu.addItem(cancel)
+        let copyError = NSMenuItem(title: "Copy Last Error Details", action: #selector(copyLastError), keyEquivalent: "")
+        copyError.target = self
+        copyError.isHidden = true
+        menu.addItem(copyError)
+        menu.addItem(.separator())
+
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+        let accessibilityItem = NSMenuItem(title: "Open Accessibility Settings", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+        accessibilityItem.target = self
+        menu.addItem(accessibilityItem)
+        let microphoneItem = NSMenuItem(title: "Open Microphone Settings", action: #selector(openMicrophoneSettings), keyEquivalent: "")
+        microphoneItem.target = self
+        menu.addItem(microphoneItem)
+        menu.addItem(.separator())
+
+        let quit = NSMenuItem(title: "Quit MacDictate", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(quit)
+        statusItem.menu = menu
+
+        self.statusItem = statusItem
+        statusMenuItem = status
+        startMenuItem = start
+        cancelMenuItem = cancel
+        copyErrorMenuItem = copyError
+    }
+
+    private func configureSettingsWindow() {
+        let view = SettingsView(
+            settings: settings,
+            stateMachine: stateMachine,
+            hotkeyManager: hotkeyManager,
+            microphonePermission: microphonePermission,
+            accessibilityPermission: accessibilityPermission,
+            launchAtLogin: launchAtLogin,
+            credentialStore: credentialStore,
+            audioRecorder: audioRecorder
+        )
+        settingsWindowController = SettingsWindowController(rootView: view)
+    }
+
+    private func updateMenu(for state: DictationPhase) {
+        statusMenuItem?.title = state.statusText
+        startMenuItem?.isEnabled = state == .idle
+        cancelMenuItem?.isEnabled = state.isActive
+        copyErrorMenuItem?.isHidden = lastErrorDetails == nil
+
+        let symbol: String
+        switch state {
+        case .recording: symbol = "mic.fill"
+        case .preparing, .transcribing, .inserting: symbol = "ellipsis.circle"
+        case .failed: symbol = "exclamationmark.triangle.fill"
+        default: symbol = "waveform"
+        }
+        statusItem?.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: state.statusText)
+        statusItem?.button?.toolTip = "MacDictate — \(state.statusText)"
+    }
+
+    @objc private func startFromMenu() { beginDictation() }
+    @objc private func cancelFromMenu() { cancelActive() }
+    @objc private func openSettings() { settingsWindowController?.show() }
+    @objc private func openAccessibilitySettings() { accessibilityPermission.openSettings() }
+    @objc private func openMicrophoneSettings() { microphonePermission.openSettings() }
+
+    @objc private func copyLastError() {
+        guard let lastErrorDetails else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(lastErrorDetails, forType: .string)
+    }
+}

@@ -1,0 +1,62 @@
+name: MacDictate
+options:
+  bundleIdPrefix: com.macdictate
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    CLANG_ENABLE_MODULES: YES
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+targets:
+  MacDictate:
+    type: application
+    platform: macOS
+    sources:
+      - path: MacDictate
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.macdictate.app
+        PRODUCT_NAME: MacDictate
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 1
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: MacDictate
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        INFOPLIST_KEY_LSUIElement: YES
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: MacDictate records audio only while you hold the push-to-talk shortcut so it can transcribe your instruction.
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: MacDictate/MacDictate.entitlements
+    dependencies:
+      - sdk: AVFoundation.framework
+      - sdk: Carbon.framework
+      - sdk: Security.framework
+      - sdk: ServiceManagement.framework
+  MacDictateTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: MacDictateTests
+    dependencies:
+      - target: MacDictate
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.macdictate.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/MacDictate.app/Contents/MacOS/MacDictate"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+schemes:
+  MacDictate:
+    build:
+      targets:
+        MacDictate: all
+        MacDictateTests: [test]
+    test:
+      targets:
+        - MacDictateTests
+
