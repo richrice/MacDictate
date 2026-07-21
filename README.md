@@ -44,7 +44,7 @@ To work in Xcode:
 open MacDictate.xcodeproj
 ```
 
-Select the `MacDictate` scheme and the **My Mac** destination. For a distributable build, select a development team and configure Developer ID signing in Xcode; the command-line scripts intentionally allow unsigned local development builds.
+Select the `MacDictate` scheme and the **My Mac** destination. Builds are signed with the development team configured in `project.yml` (`DEVELOPMENT_TEAM`), which keeps Microphone and Accessibility grants stable across rebuilds. Set your own team ID there (or clear it and pass `CODE_SIGNING_ALLOWED=NO` for unsigned builds). Distribution outside your own machines requires Developer ID signing configured in Xcode.
 
 ## First-time setup
 
@@ -116,7 +116,7 @@ Open **Settings → Hotkey**. If a conflict is shown, choose another preset. Som
 
 ### Microphone access is denied
 
-Use the menu's **Open Microphone Settings**, enable MacDictate, quit it, and reopen it. If a rebuilt unsigned app is treated as a new binary, install/sign it at a stable path before granting permission again.
+Use the menu's **Open Microphone Settings**, enable MacDictate, quit it, and reopen it. Team-signed builds keep their permission grants across rebuilds; unsigned builds (`CODE_SIGNING_ALLOWED=NO`) are treated as a new binary on every rebuild and re-prompt each time.
 
 ### Text is copied but not inserted
 
