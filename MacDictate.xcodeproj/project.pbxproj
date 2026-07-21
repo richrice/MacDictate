@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		027ECA044347A86A9058F8E3 /* AudioTapIsolationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46012278DED84F435E5FF482 /* AudioTapIsolationTests.swift */; };
 		0A8D99E17013C4A3FED3EDE8 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D63BC4748092AD419F94090C /* Security.framework */; };
 		1C41924C86E382E37C7DCDAB /* TextInsertionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAEEAAC2C41334FC8B59E1A5 /* TextInsertionService.swift */; };
 		1CB6B0770C8F5A670A03B32B /* Credentials.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8738C80AC0A5463A8B1D134 /* Credentials.swift */; };
@@ -49,6 +50,7 @@
 		19A05D8A2E0CCFAEC92A7B28 /* ServiceManagement.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ServiceManagement.framework; path = System/Library/Frameworks/ServiceManagement.framework; sourceTree = SDKROOT; };
 		3ED6EE8861F18DA90EDA0F3B /* StorageInsertionAndPrivacyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageInsertionAndPrivacyTests.swift; sourceTree = "<group>"; };
 		42DFA35A4304445953E19C80 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
+		46012278DED84F435E5FF482 /* AudioTapIsolationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioTapIsolationTests.swift; sourceTree = "<group>"; };
 		4C44A9A6E4C2F9D8C3D6EC5C /* ClipboardManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardManager.swift; sourceTree = "<group>"; };
 		539B60411C699464F786290C /* MacDictate.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MacDictate.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		599BA326BCA87CC57105F001 /* AppCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCoordinator.swift; sourceTree = "<group>"; };
@@ -146,6 +148,7 @@
 		D112BAAA234D3CC3183D78FE /* MacDictateTests */ = {
 			isa = PBXGroup;
 			children = (
+				46012278DED84F435E5FF482 /* AudioTapIsolationTests.swift */,
 				0A29F3A54D22BEFEEDB1469E /* MultipartAndTranscriptionTests.swift */,
 				858782A062F50E08FA10011D /* StateMachineTests.swift */,
 				3ED6EE8861F18DA90EDA0F3B /* StorageInsertionAndPrivacyTests.swift */,
@@ -236,6 +239,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				027ECA044347A86A9058F8E3 /* AudioTapIsolationTests.swift in Sources */,
 				41B56FF8932020628870B6A0 /* MultipartAndTranscriptionTests.swift in Sources */,
 				B5E4F870B7A448609BA950BC /* StateMachineTests.swift in Sources */,
 				86E3818D25681404F153B4BA /* StorageInsertionAndPrivacyTests.swift in Sources */,

@@ -11,6 +11,14 @@ struct RecordedAudio: Sendable, Equatable {
     }
 }
 
+enum AudioTapBlockFactory {
+    nonisolated static func make(
+        handler: @escaping @Sendable (AVAudioPCMBuffer) -> Void
+    ) -> AVAudioNodeTapBlock {
+        { buffer, _ in handler(buffer) }
+    }
+}
+
 enum AudioRecorderError: LocalizedError, Equatable {
     case permissionDenied
     case noInputDevice
@@ -209,9 +217,10 @@ final class AudioRecorder: AudioRecording {
         writer = audioWriter
         recordingURL = url
 
-        inputNode.installTap(onBus: 0, bufferSize: 2_048, format: inputFormat) { buffer, _ in
+        let tapBlock = AudioTapBlockFactory.make { [audioWriter] buffer in
             audioWriter.append(buffer)
         }
+        inputNode.installTap(onBus: 0, bufferSize: 2_048, format: inputFormat, block: tapBlock)
 
         do {
             engine.prepare()

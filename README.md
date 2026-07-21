@@ -161,7 +161,6 @@ The Keychain item is independent of the app bundle; delete it explicitly with on
 
 ## Validation and architecture
 
-Automated coverage includes the state machine, short-press policy, multipart fields and binary content, authorization construction, plain text and JSON error parsing, retry policy through URLProtocol, a mock credential store, pasteboard restoration races, insertion fallback order, temporary-file cleanup, and secret redaction.
+Automated coverage includes the state machine, short-press policy, off-main audio tap execution, multipart fields and binary content, authorization construction, plain text and JSON error parsing, retry policy through URLProtocol, a mock credential store, pasteboard restoration races, insertion fallback order, temporary-file cleanup, and secret redaction.
 
 Hardware, global input, permission prompts, and application-specific Accessibility behavior require manual testing. Follow [docs/MANUAL_TEST_PLAN.md](docs/MANUAL_TEST_PLAN.md).
-

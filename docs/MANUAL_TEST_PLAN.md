@@ -214,11 +214,10 @@ Expected: `SMAppService` status matches Settings and no duplicate instances laun
 
 Record:
 
-- Build and all 17 automated tests: pass/fail
+- Build and all 18 automated tests: pass/fail
 - First launch and both permission paths: pass/fail
 - Apple Terminal, Codex CLI, Claude Code, VS Code, SwiftUI TextEditor, browser text area: pass/fail with versions
 - Clipboard unchanged and externally changed cases: pass/fail
 - Authentication, offline, 429, cancellation, rapid input, and microphone disconnect recovery: pass/fail
 - Relaunch, residue scan, and launch at login: pass/fail
 - Any limitation, exact reproduction steps, and redacted diagnostics
-
