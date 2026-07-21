@@ -4,6 +4,20 @@ MacDictate is a native macOS menu-bar push-to-talk dictation utility for writing
 
 Hold **Option-Space**, speak, and release. MacDictate records only while the shortcut is held, sends the temporary WAV recording to the OpenAI transcription API, and inserts the returned text at the cursor in the application that was focused when recording began. It never presses Return or submits the prompt.
 
+## Install from a release (no build required)
+
+1. Download `MacDictate-<version>.zip` from the [latest release](https://github.com/richrice/MacDictate/releases/latest) and unzip it.
+2. Move `MacDictate.app` into `/Applications`.
+3. First launch: release builds are development-signed, not notarized, so macOS will refuse a normal double-click with "Apple cannot check it for malicious software." Either right-click the app and choose **Open**, then **Open** again in the dialog, or run:
+
+   ```sh
+   xattr -d com.apple.quarantine /Applications/MacDictate.app
+   ```
+
+4. Continue with [First-time setup](#first-time-setup) below: add your OpenAI API key and grant Microphone and Accessibility permissions.
+
+If you prefer to audit what you run—reasonable for an app with microphone and Accessibility access—build it from source instead using the steps below.
+
 ## Requirements
 
 - macOS 14 Sonoma or newer
