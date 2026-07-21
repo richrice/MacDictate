@@ -5,9 +5,12 @@ struct RecordedAudio: Sendable, Equatable {
     let fileURL: URL
     let duration: TimeInterval
     let peakAmplitude: Float
+    let rmsAmplitude: Float
 
+    // Peak alone is a weak gate: a single breath or key click exceeds it.
+    // RMS catches recordings whose overall energy is far below speech.
     var isEffectivelySilent: Bool {
-        peakAmplitude < 0.003 || duration <= 0
+        peakAmplitude < 0.003 || rmsAmplitude < 0.001 || duration <= 0
     }
 }
 
@@ -59,6 +62,8 @@ final class LockedAudioWriter: @unchecked Sendable {
     private let outputFormat: AVAudioFormat
     private(set) var frameCount: AVAudioFramePosition = 0
     private(set) var peakAmplitude: Float = 0
+    private var sumOfSquares = 0.0
+    private var levelSampleCount = 0
     private var firstError: Error?
 
     init(url: URL, inputFormat: AVAudioFormat) throws {
@@ -113,14 +118,15 @@ final class LockedAudioWriter: @unchecked Sendable {
         }
     }
 
-    func finish() throws -> (frames: AVAudioFramePosition, peak: Float) {
+    func finish() throws -> (frames: AVAudioFramePosition, peak: Float, rms: Float) {
         lock.lock()
         defer { lock.unlock() }
         file = nil
         if let firstError {
             throw AudioRecorderError.conversionFailed(firstError.localizedDescription)
         }
-        return (frameCount, peakAmplitude)
+        let rms = levelSampleCount > 0 ? Float((sumOfSquares / Double(levelSampleCount)).squareRoot()) : 0
+        return (frameCount, peakAmplitude, rms)
     }
 
     private func updatePeak(from buffer: AVAudioPCMBuffer) {
@@ -130,9 +136,12 @@ final class LockedAudioWriter: @unchecked Sendable {
         for channel in 0..<channelCount {
             let samples = channels[channel]
             for index in 0..<frameLength {
-                peakAmplitude = max(peakAmplitude, abs(samples[index]))
+                let sample = samples[index]
+                peakAmplitude = max(peakAmplitude, abs(sample))
+                sumOfSquares += Double(sample * sample)
             }
         }
+        levelSampleCount += channelCount * frameLength
     }
 }
 
@@ -245,7 +254,8 @@ final class AudioRecorder: AudioRecording {
             return RecordedAudio(
                 fileURL: url,
                 duration: Double(result.frames) / 16_000,
-                peakAmplitude: result.peak
+                peakAmplitude: result.peak,
+                rmsAmplitude: result.rms
             )
         } catch {
             try? FileManager.default.removeItem(at: url)

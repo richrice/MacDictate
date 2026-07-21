@@ -9,6 +9,7 @@ private final class MockAudioRecorder: AudioRecording {
     var onInterruption: ((String) -> Void)?
 
     var peakAmplitude: Float = 0.5
+    var rmsAmplitude: Float = 0.1
     var duration: TimeInterval = 1.0
     private(set) var cancelCount = 0
 
@@ -19,7 +20,8 @@ private final class MockAudioRecorder: AudioRecording {
             fileURL: FileManager.default.temporaryDirectory
                 .appendingPathComponent("MacDictate-mock-\(UUID().uuidString).wav"),
             duration: duration,
-            peakAmplitude: peakAmplitude
+            peakAmplitude: peakAmplitude,
+            rmsAmplitude: rmsAmplitude
         )
     }
 
@@ -226,6 +228,29 @@ final class CoordinatorWorkflowTests: XCTestCase {
         XCTAssertEqual(stateMachine.state, .cancelled(message: "No speech detected"))
         XCTAssertNil(coordinator.lastErrorDetails)
         XCTAssertEqual(cleaner.deleted.count, 1)
+    }
+
+    func testPromptEchoTranscriptionIsBenignCancel() async throws {
+        // Silent-audio hallucination: the model returns the context prompt.
+        transcription.behavior = .success("###\n\(SettingsStore.defaultPrompt)\n###")
+        try await holdThroughMinimumPress()
+        coordinator.finishDictation()
+        await waitFor("workflow should end") { self.stateMachine.state.isTerminal }
+
+        XCTAssertEqual(stateMachine.state, .cancelled(message: "No speech detected"))
+        XCTAssertEqual(insertion.inserted, [], "A prompt echo must never be inserted")
+        XCTAssertNil(coordinator.lastErrorDetails)
+    }
+
+    func testQuietButAudibleRecordingWithClickIsRejected() async throws {
+        // A key click gives a peak above the old gate, but overall energy is silence.
+        recorder.peakAmplitude = 0.05
+        recorder.rmsAmplitude = 0.0001
+        try await holdThroughMinimumPress()
+        coordinator.finishDictation()
+
+        XCTAssertEqual(stateMachine.state, .cancelled(message: "No speech detected"))
+        XCTAssertEqual(transcription.calls, 0)
     }
 
     func testMissingAPIKeyFails() async throws {

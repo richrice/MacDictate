@@ -46,7 +46,7 @@ struct HotkeyShortcut: Codable, Hashable, Identifiable, Sendable {
 
 @MainActor
 final class SettingsStore: ObservableObject {
-    static let defaultPrompt = "Transcribe an English software-engineering instruction accurately. Preserve technical names, filenames, file paths, shell commands, command-line flags, URLs, version numbers, variable names, class names, acronyms, and quoted text. Relevant vocabulary includes Codex, Claude Code, Git, GitHub, Swift, SwiftUI, Xcode, Kotlin, Java, TypeScript, JavaScript, Python, Docker, npm, pnpm, Homebrew, Jira, SVN, ESP32, STM32, macOS, iOS, Android, API, JSON, YAML, SQL, SQLite, OpenRouter, Traxxas, and Firebase. Use normal punctuation and capitalization."
+    nonisolated static let defaultPrompt = "Transcribe an English software-engineering instruction accurately. Preserve technical names, filenames, file paths, shell commands, command-line flags, URLs, version numbers, variable names, class names, acronyms, and quoted text. Relevant vocabulary includes Codex, Claude Code, Git, GitHub, Swift, SwiftUI, Xcode, Kotlin, Java, TypeScript, JavaScript, Python, Docker, npm, pnpm, Homebrew, Jira, SVN, ESP32, STM32, macOS, iOS, Android, API, JSON, YAML, SQL, SQLite, OpenRouter, Traxxas, and Firebase. Use normal punctuation and capitalization."
 
     private enum Key {
         static let showHUD = "showHUD"

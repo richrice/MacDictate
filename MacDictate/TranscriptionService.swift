@@ -43,6 +43,30 @@ enum TranscriptionError: LocalizedError, Equatable {
     }
 }
 
+/// Transcription models given (near-)silent audio sometimes hallucinate the
+/// request's context prompt back as the "transcription", often wrapped in
+/// markers like `###`. Detect that so it is treated as no speech.
+enum PromptEchoDetector {
+    static func isLikelyEcho(transcript: String, contextPrompt: String) -> Bool {
+        let normalizedTranscript = normalize(transcript)
+        let normalizedPrompt = normalize(contextPrompt)
+        guard !normalizedTranscript.isEmpty, normalizedPrompt.count >= 30 else { return false }
+
+        // The whole prompt inside the transcript (with or without wrapper text),
+        // or a transcript that is nothing but a sizable run of the prompt.
+        if normalizedTranscript.contains(normalizedPrompt) { return true }
+        if normalizedTranscript.count >= 30, normalizedPrompt.contains(normalizedTranscript) { return true }
+        return false
+    }
+
+    private static func normalize(_ text: String) -> String {
+        text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+}
+
 struct OpenAIErrorEnvelope: Decodable {
     struct APIError: Decodable {
         let message: String?

@@ -257,6 +257,12 @@ final class AppCoordinator: NSObject {
             )
             try Task.checkCancellation()
 
+            guard !PromptEchoDetector.isLikelyEcho(transcript: transcript, contextPrompt: settings.transcriptionPrompt) else {
+                AppLogger.transcription.info("Discarding a transcription that echoes the context prompt")
+                cancelBenignly(message: "No speech detected")
+                return
+            }
+
             var completionMessage = "Transcription complete"
             if settings.automaticallyInsert {
                 try stateMachine.transition(to: .inserting)

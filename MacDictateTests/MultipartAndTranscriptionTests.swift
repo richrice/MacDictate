@@ -178,6 +178,42 @@ final class MultipartAndTranscriptionTests: XCTestCase {
         }
     }
 
+    func testPromptEchoDetection() {
+        let prompt = SettingsStore.defaultPrompt
+
+        // The observed failure: the whole prompt wrapped in ### markers.
+        XCTAssertTrue(PromptEchoDetector.isLikelyEcho(transcript: "###\n\(prompt)\n###", contextPrompt: prompt))
+        // A verbatim echo without wrappers.
+        XCTAssertTrue(PromptEchoDetector.isLikelyEcho(transcript: prompt, contextPrompt: prompt))
+        // A sizable fragment of the prompt and nothing else.
+        XCTAssertTrue(PromptEchoDetector.isLikelyEcho(
+            transcript: "Preserve technical names, filenames, file paths, shell commands,",
+            contextPrompt: prompt
+        ))
+
+        // Real dictations that merely share vocabulary with the prompt must pass.
+        XCTAssertFalse(PromptEchoDetector.isLikelyEcho(transcript: "Fix the Docker file", contextPrompt: prompt))
+        XCTAssertFalse(PromptEchoDetector.isLikelyEcho(
+            transcript: "Use Git to revert the last commit on the MacDictate repository and rerun the tests.",
+            contextPrompt: prompt
+        ))
+        // Short transcripts are never treated as echoes.
+        XCTAssertFalse(PromptEchoDetector.isLikelyEcho(transcript: "Use normal punctuation", contextPrompt: prompt))
+        // An empty context prompt disables the check.
+        XCTAssertFalse(PromptEchoDetector.isLikelyEcho(transcript: "anything the user says here", contextPrompt: ""))
+    }
+
+    func testRecordedAudioSilenceGate() {
+        let url = URL(fileURLWithPath: "/tmp/gate.wav")
+        // Normal speech levels pass.
+        XCTAssertFalse(RecordedAudio(fileURL: url, duration: 1, peakAmplitude: 0.4, rmsAmplitude: 0.05).isEffectivelySilent)
+        // A click peak over near-silence is rejected by the RMS gate.
+        XCTAssertTrue(RecordedAudio(fileURL: url, duration: 1, peakAmplitude: 0.05, rmsAmplitude: 0.0001).isEffectivelySilent)
+        // Flat digital silence is rejected by the peak gate.
+        XCTAssertTrue(RecordedAudio(fileURL: url, duration: 1, peakAmplitude: 0.001, rmsAmplitude: 0.0005).isEffectivelySilent)
+        XCTAssertTrue(RecordedAudio(fileURL: url, duration: 0, peakAmplitude: 0.4, rmsAmplitude: 0.05).isEffectivelySilent)
+    }
+
     func testRetryAfterHeaderParsing() {
         let fallback: UInt64 = 800_000_000
         XCTAssertEqual(OpenAITranscriptionService.parseRetryDelay(header: "2", fallbackNanoseconds: fallback), 2_000_000_000)
