@@ -53,6 +53,7 @@ final class AppCoordinator: NSObject {
     private var workspaceObserver: NSObjectProtocol?
     private var settingsObserver: NSObjectProtocol?
     private var workflowTask: Task<Void, Never>?
+    private var muteTask: Task<Void, Never>?
     private var maximumDurationTask: Task<Void, Never>?
     private var resetTask: Task<Void, Never>?
     private var capturedTarget: TargetApplication?
@@ -153,11 +154,9 @@ final class AppCoordinator: NSObject {
                 try await self.audioRecorder.prepare()
                 try Task.checkCancellation()
                 try self.audioRecorder.start()
-                if self.settings.muteSystemAudioDuringDictation {
-                    self.audioOutputController.muteForDictation()
-                }
                 try self.stateMachine.transition(to: .recording(startedAt: Date()))
                 self.playSound(named: "Pop")
+                self.scheduleMute()
                 self.scheduleMaximumDuration()
             } catch is CancellationError {
                 self.cancelActive(showMessage: true)
@@ -188,6 +187,8 @@ final class AppCoordinator: NSObject {
         maximumDurationTask?.cancel()
         maximumDurationTask = nil
         audioRecorder.cancel()
+        muteTask?.cancel()
+        muteTask = nil
         audioOutputController.restoreAfterDictation()
         do {
             try stateMachine.transition(to: .cancelled(message: nil))
@@ -207,6 +208,8 @@ final class AppCoordinator: NSObject {
         maximumDurationTask?.cancel()
         maximumDurationTask = nil
         audioRecorder.cancel()
+        muteTask?.cancel()
+        muteTask = nil
         audioOutputController.restoreAfterDictation()
         try? stateMachine.transition(to: .cancelled(message: message))
         scheduleReset()
@@ -217,6 +220,8 @@ final class AppCoordinator: NSObject {
         maximumDurationTask = nil
         if enforceMinimum, !RecordingPolicy.shouldTranscribe(elapsed: elapsed) {
             audioRecorder.cancel()
+            muteTask?.cancel()
+            muteTask = nil
             audioOutputController.restoreAfterDictation()
             do {
                 try stateMachine.transition(to: .cancelled(message: nil))
@@ -229,6 +234,8 @@ final class AppCoordinator: NSObject {
 
         do {
             let recordedAudio = try audioRecorder.stop()
+            muteTask?.cancel()
+            muteTask = nil
             audioOutputController.restoreAfterDictation()
             playSound(named: "Tink")
             guard !recordedAudio.isEffectivelySilent else {
@@ -320,12 +327,29 @@ final class AppCoordinator: NSObject {
         }
     }
 
+    private func scheduleMute() {
+        guard settings.muteSystemAudioDuringDictation else { return }
+        guard settings.playSounds else {
+            // No start sound to protect; mute immediately.
+            audioOutputController.muteForDictation()
+            return
+        }
+        muteTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled, let self else { return }
+            guard case .recording = self.stateMachine.state else { return }
+            self.audioOutputController.muteForDictation()
+        }
+    }
+
     private func fail(_ error: Error) {
         workflowTask?.cancel()
         workflowTask = nil
         maximumDurationTask?.cancel()
         maximumDurationTask = nil
         audioRecorder.cancel()
+        muteTask?.cancel()
+        muteTask = nil
         audioOutputController.restoreAfterDictation()
         let friendly = error.localizedDescription
         lastErrorDetails = SecretRedactor.redact(String(reflecting: error))

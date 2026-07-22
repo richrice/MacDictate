@@ -200,6 +200,20 @@ final class CoordinatorWorkflowTests: XCTestCase {
         XCTAssertFalse(audioOutputController.isCurrentlyMuted)
     }
 
+    func testCancelDuringMuteDelayLeavesOutputUnmuted() async throws {
+        settings.playSounds = true
+        coordinator.beginDictation()
+        await waitFor("recording should start") {
+            if case .recording = self.stateMachine.state { true } else { false }
+        }
+        coordinator.finishDictation()
+        await waitFor("workflow should end") { self.stateMachine.state.isTerminal }
+        try await Task.sleep(for: .milliseconds(250))
+
+        XCTAssertEqual(audioOutputController.muteCount, 0)
+        XCTAssertFalse(audioOutputController.isCurrentlyMuted)
+    }
+
     func testPressDuringTerminalCooldownStartsNewDictation() async throws {
         try await holdThroughMinimumPress()
         coordinator.finishDictation()
