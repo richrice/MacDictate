@@ -35,6 +35,7 @@ targets:
     dependencies:
       - sdk: AVFoundation.framework
       - sdk: Carbon.framework
+      - sdk: CoreAudio.framework
       - sdk: Security.framework
       - sdk: ServiceManagement.framework
   MacDictateTests:

@@ -25,6 +25,7 @@ struct MacDictateApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let coordinator: AppCoordinator
+    private let audioOutputController: SystemAudioOutputController
 
     override init() {
         let settings = SettingsStore()
@@ -36,12 +37,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let audioRecorder = AudioRecorder(permissionManager: microphonePermission)
         let credentialStore = KeychainCredentialStore()
         let clipboard = ClipboardManager()
+        let audioOutputController = SystemAudioOutputController()
         let insertionService = DefaultTextInsertionService(
             permissionManager: accessibilityPermission,
             directInserter: AccessibilityDirectInserter(),
             pasteInserter: ClipboardPasteInserter(clipboard: clipboard),
             clipboard: clipboard
         )
+        self.audioOutputController = audioOutputController
         coordinator = AppCoordinator(
             settings: settings,
             stateMachine: stateMachine,
@@ -52,7 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             audioRecorder: audioRecorder,
             transcriptionService: OpenAITranscriptionService(),
             credentialStore: credentialStore,
-            insertionService: insertionService
+            insertionService: insertionService,
+            audioOutputController: audioOutputController
         )
         super.init()
     }
@@ -62,6 +66,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // global hotkey or build the menu bar during a test run.
         guard NSClassFromString("XCTestCase") == nil else { return }
         coordinator.start()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        audioOutputController.restoreAfterDictation()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

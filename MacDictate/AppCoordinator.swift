@@ -37,6 +37,7 @@ final class AppCoordinator: NSObject {
     private let transcriptionService: TranscriptionService
     private let credentialStore: SecureCredentialStore
     private let insertionService: TextInsertionService
+    private let audioOutputController: SystemAudioOutputControlling
     private let fileCleaner: TemporaryFileCleaning
 
     private var statusItem: NSStatusItem?
@@ -70,6 +71,7 @@ final class AppCoordinator: NSObject {
         transcriptionService: TranscriptionService,
         credentialStore: SecureCredentialStore,
         insertionService: TextInsertionService,
+        audioOutputController: SystemAudioOutputControlling,
         fileCleaner: TemporaryFileCleaning = TemporaryFileCleaner()
     ) {
         self.settings = settings
@@ -82,6 +84,7 @@ final class AppCoordinator: NSObject {
         self.transcriptionService = transcriptionService
         self.credentialStore = credentialStore
         self.insertionService = insertionService
+        self.audioOutputController = audioOutputController
         self.fileCleaner = fileCleaner
         super.init()
     }
@@ -150,6 +153,9 @@ final class AppCoordinator: NSObject {
                 try await self.audioRecorder.prepare()
                 try Task.checkCancellation()
                 try self.audioRecorder.start()
+                if self.settings.muteSystemAudioDuringDictation {
+                    self.audioOutputController.muteForDictation()
+                }
                 try self.stateMachine.transition(to: .recording(startedAt: Date()))
                 self.playSound(named: "Pop")
                 self.scheduleMaximumDuration()
@@ -182,6 +188,7 @@ final class AppCoordinator: NSObject {
         maximumDurationTask?.cancel()
         maximumDurationTask = nil
         audioRecorder.cancel()
+        audioOutputController.restoreAfterDictation()
         do {
             try stateMachine.transition(to: .cancelled(message: nil))
             if showMessage { AppLogger.lifecycle.info("Dictation cancelled") }
@@ -200,6 +207,7 @@ final class AppCoordinator: NSObject {
         maximumDurationTask?.cancel()
         maximumDurationTask = nil
         audioRecorder.cancel()
+        audioOutputController.restoreAfterDictation()
         try? stateMachine.transition(to: .cancelled(message: message))
         scheduleReset()
     }
@@ -209,6 +217,7 @@ final class AppCoordinator: NSObject {
         maximumDurationTask = nil
         if enforceMinimum, !RecordingPolicy.shouldTranscribe(elapsed: elapsed) {
             audioRecorder.cancel()
+            audioOutputController.restoreAfterDictation()
             do {
                 try stateMachine.transition(to: .cancelled(message: nil))
                 scheduleReset()
@@ -220,6 +229,7 @@ final class AppCoordinator: NSObject {
 
         do {
             let recordedAudio = try audioRecorder.stop()
+            audioOutputController.restoreAfterDictation()
             playSound(named: "Tink")
             guard !recordedAudio.isEffectivelySilent else {
                 fileCleaner.delete(recordedAudio.fileURL)
@@ -316,6 +326,7 @@ final class AppCoordinator: NSObject {
         maximumDurationTask?.cancel()
         maximumDurationTask = nil
         audioRecorder.cancel()
+        audioOutputController.restoreAfterDictation()
         let friendly = error.localizedDescription
         lastErrorDetails = SecretRedactor.redact(String(reflecting: error))
         AppLogger.lifecycle.error("Dictation failed: \(friendly, privacy: .public)")

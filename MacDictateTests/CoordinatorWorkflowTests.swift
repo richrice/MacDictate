@@ -74,6 +74,25 @@ private final class MockInsertionService: TextInsertionService {
     func copy(_ text: String) { copied.append(text) }
 }
 
+@MainActor
+private final class MockSystemAudioOutputController: SystemAudioOutputControlling {
+    private(set) var muteCount: Int = 0
+    private(set) var restoreCount: Int = 0
+    private var currentlyMuted = false
+
+    var isCurrentlyMuted: Bool { currentlyMuted }
+
+    func muteForDictation() {
+        muteCount += 1
+        currentlyMuted = true
+    }
+
+    func restoreAfterDictation() {
+        restoreCount += 1
+        currentlyMuted = false
+    }
+}
+
 private final class MockFileCleaner: TemporaryFileCleaning, @unchecked Sendable {
     private let lock = NSLock()
     private var _deleted: [URL] = []
@@ -85,16 +104,18 @@ private final class MockFileCleaner: TemporaryFileCleaning, @unchecked Sendable 
 @MainActor
 final class CoordinatorWorkflowTests: XCTestCase {
     private var coordinator: AppCoordinator!
+    private var settings: SettingsStore!
     private var stateMachine: DictationStateMachine!
     private var recorder: MockAudioRecorder!
     private var transcription: MockTranscriptionService!
     private var insertion: MockInsertionService!
+    private var audioOutputController: MockSystemAudioOutputController!
     private var credentials: InMemoryCredentialStore!
     private var cleaner: MockFileCleaner!
 
     override func setUp() async throws {
         let defaults = UserDefaults(suiteName: "CoordinatorWorkflowTests-\(UUID().uuidString)")!
-        let settings = SettingsStore(defaults: defaults)
+        settings = SettingsStore(defaults: defaults)
         settings.playSounds = false
         settings.showHUD = false
 
@@ -102,6 +123,7 @@ final class CoordinatorWorkflowTests: XCTestCase {
         recorder = MockAudioRecorder()
         transcription = MockTranscriptionService()
         insertion = MockInsertionService()
+        audioOutputController = MockSystemAudioOutputController()
         credentials = InMemoryCredentialStore()
         try credentials.save("test-key")
         cleaner = MockFileCleaner()
@@ -118,6 +140,7 @@ final class CoordinatorWorkflowTests: XCTestCase {
             transcriptionService: transcription,
             credentialStore: credentials,
             insertionService: insertion,
+            audioOutputController: audioOutputController,
             fileCleaner: cleaner
         )
         // Deterministic target regardless of which app is frontmost during tests.
@@ -159,6 +182,8 @@ final class CoordinatorWorkflowTests: XCTestCase {
         XCTAssertEqual(insertion.inserted, ["hello world"])
         XCTAssertEqual(cleaner.deleted.count, 1, "The temporary recording must be deleted")
         XCTAssertNil(coordinator.lastErrorDetails)
+        XCTAssertEqual(audioOutputController.muteCount, 1)
+        XCTAssertFalse(audioOutputController.isCurrentlyMuted)
     }
 
     func testShortPressCancelsWithoutTranscribing() async throws {
@@ -171,6 +196,8 @@ final class CoordinatorWorkflowTests: XCTestCase {
         XCTAssertEqual(stateMachine.state, .cancelled(message: nil))
         XCTAssertEqual(transcription.calls, 0)
         XCTAssertEqual(recorder.cancelCount, 1)
+        XCTAssertEqual(audioOutputController.muteCount, 1)
+        XCTAssertFalse(audioOutputController.isCurrentlyMuted)
     }
 
     func testPressDuringTerminalCooldownStartsNewDictation() async throws {
@@ -266,5 +293,15 @@ final class CoordinatorWorkflowTests: XCTestCase {
         XCTAssertEqual(message, TranscriptionError.missingAPIKey.localizedDescription)
         XCTAssertEqual(transcription.calls, 0)
         XCTAssertNotNil(coordinator.lastErrorDetails)
+        XCTAssertFalse(audioOutputController.isCurrentlyMuted)
+    }
+
+    func testMuteDisabledSettingSkipsMuting() async throws {
+        settings.muteSystemAudioDuringDictation = false
+        try await holdThroughMinimumPress()
+        coordinator.finishDictation()
+        await waitFor("workflow should complete") { self.stateMachine.state.isTerminal }
+
+        XCTAssertEqual(audioOutputController.muteCount, 0)
     }
 }

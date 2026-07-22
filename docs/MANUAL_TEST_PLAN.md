@@ -223,3 +223,12 @@ Record:
 - Authentication, offline, 429, cancellation, rapid input, and microphone disconnect recovery: pass/fail
 - Relaunch, residue scan, and launch at login: pass/fail
 - Any limitation, exact reproduction steps, and redacted diagnostics
+
+## 19. System audio muting during dictation
+
+1. Play audible system audio, such as a YouTube video, then hold the dictation hotkey and verify the output mutes.
+2. Release the hotkey and verify the exact prior output state is restored. Repeat once with output already muted to verify it remains muted afterward.
+3. Turn off **Mute system audio while dictating**, repeat a dictation while audio plays, and verify the output does not mute.
+4. Turn the setting back on, begin dictating while audio plays, quit MacDictate mid-recording, and verify the prior output state is restored.
+
+Expected: normal recording completion and app termination restore the prior output state. A hard crash while recording may leave output muted (or, on devices without a mute control, at zero volume); recover with the keyboard mute key or by raising the output volume.

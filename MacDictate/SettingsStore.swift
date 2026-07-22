@@ -78,6 +78,7 @@ final class SettingsStore: ObservableObject {
     private enum Key {
         static let showHUD = "showHUD"
         static let playSounds = "playSounds"
+        static let muteSystemAudioDuringDictation = "muteSystemAudioDuringDictation"
         static let automaticallyInsert = "automaticallyInsert"
         static let copyToClipboard = "copyToClipboard"
         static let maximumRecordingDuration = "maximumRecordingDuration"
@@ -92,6 +93,7 @@ final class SettingsStore: ObservableObject {
 
     @Published var showHUD: Bool { didSet { defaults.set(showHUD, forKey: Key.showHUD) } }
     @Published var playSounds: Bool { didSet { defaults.set(playSounds, forKey: Key.playSounds) } }
+    @Published var muteSystemAudioDuringDictation: Bool { didSet { defaults.set(muteSystemAudioDuringDictation, forKey: Key.muteSystemAudioDuringDictation) } }
     @Published var automaticallyInsert: Bool { didSet { defaults.set(automaticallyInsert, forKey: Key.automaticallyInsert) } }
     @Published var copyToClipboard: Bool { didSet { defaults.set(copyToClipboard, forKey: Key.copyToClipboard) } }
     @Published var maximumRecordingDuration: Double { didSet { defaults.set(maximumRecordingDuration, forKey: Key.maximumRecordingDuration) } }
@@ -106,6 +108,7 @@ final class SettingsStore: ObservableObject {
         defaults.register(defaults: [
             Key.showHUD: true,
             Key.playSounds: true,
+            Key.muteSystemAudioDuringDictation: true,
             Key.automaticallyInsert: true,
             Key.copyToClipboard: false,
             Key.maximumRecordingDuration: 300.0,
@@ -117,6 +120,7 @@ final class SettingsStore: ObservableObject {
 
         showHUD = defaults.bool(forKey: Key.showHUD)
         playSounds = defaults.bool(forKey: Key.playSounds)
+        muteSystemAudioDuringDictation = defaults.bool(forKey: Key.muteSystemAudioDuringDictation)
         automaticallyInsert = defaults.bool(forKey: Key.automaticallyInsert)
         copyToClipboard = defaults.bool(forKey: Key.copyToClipboard)
         maximumRecordingDuration = min(max(defaults.double(forKey: Key.maximumRecordingDuration), 10), 300)
