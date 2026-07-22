@@ -65,10 +65,11 @@ private final class MockTranscriptionService: TranscriptionService, @unchecked S
 private final class MockInsertionService: TextInsertionService {
     private(set) var inserted: [String] = []
     private(set) var copied: [String] = []
+    var outcome: TextInsertionOutcome = .accessibility
 
     func insert(_ text: String, target: TargetApplication) async throws -> TextInsertionOutcome {
         inserted.append(text)
-        return .accessibility
+        return outcome
     }
 
     func copy(_ text: String) { copied.append(text) }
@@ -184,6 +185,37 @@ final class CoordinatorWorkflowTests: XCTestCase {
         XCTAssertNil(coordinator.lastErrorDetails)
         XCTAssertEqual(audioOutputController.muteCount, 1)
         XCTAssertFalse(audioOutputController.isCurrentlyMuted)
+    }
+
+    func testUnverifiedAutomaticInsertionIsNotReportedAsSuccessful() async throws {
+        insertion.outcome = .automaticInsertionUnverified
+        try await holdThroughMinimumPress()
+        coordinator.finishDictation()
+        await waitFor("workflow should complete") { self.stateMachine.state.isTerminal }
+
+        XCTAssertEqual(stateMachine.state, .completed(message: "Insertion unconfirmed"))
+        XCTAssertEqual(insertion.inserted, ["hello world"])
+    }
+
+    func testDispatchedPasteUsesTruthfulCompletionMessage() async throws {
+        insertion.outcome = .pasteDispatched
+        try await holdThroughMinimumPress()
+        coordinator.finishDictation()
+        await waitFor("workflow should complete") { self.stateMachine.state.isTerminal }
+
+        XCTAssertEqual(stateMachine.state, .completed(message: "Paste sent"))
+        XCTAssertEqual(insertion.inserted, ["hello world"])
+    }
+
+    func testCopySettingDoesNotOverwriteUnverifiedInsertionMessage() async throws {
+        insertion.outcome = .automaticInsertionUnverified
+        settings.copyToClipboard = true
+        try await holdThroughMinimumPress()
+        coordinator.finishDictation()
+        await waitFor("workflow should complete") { self.stateMachine.state.isTerminal }
+
+        XCTAssertEqual(stateMachine.state, .completed(message: "Insertion unconfirmed"))
+        XCTAssertEqual(insertion.copied, ["hello world"])
     }
 
     func testShortPressCancelsWithoutTranscribing() async throws {

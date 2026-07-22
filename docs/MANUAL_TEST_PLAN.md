@@ -83,7 +83,7 @@ Expected: model/language/context changes apply to later requests; the context is
 4. Verify text appears at the Terminal cursor, but Terminal does not execute it.
 5. Press Control-D to leave `cat`.
 
-Expected: AX insertion or the Command-V fallback inserts exactly once; Return is never synthesized.
+Expected: AX insertion, Unicode keyboard insertion, or the verified Command-V fallback inserts exactly once; Return is never synthesized.
 
 ## 8. Codex CLI insertion
 
@@ -106,14 +106,15 @@ Expected: the workflow matches Codex CLI and does not emit Return.
 
 Repeat a short dictation in each available target:
 
-1. iTerm2 running `cat`.
-2. VS Code's integrated terminal.
-3. A VS Code editor document.
-4. Cursor's prompt field.
-5. A standard SwiftUI `TextEditor` in a small local test app.
-6. Safari or Chrome text area on a non-sensitive blank/test page.
+1. The ChatGPT desktop app's Codex composer, with an insertion caret visible.
+2. iTerm2 running `cat`.
+3. VS Code's integrated terminal.
+4. A VS Code editor document.
+5. Cursor's prompt field.
+6. A standard SwiftUI `TextEditor` in a small local test app.
+7. Safari or Chrome text area on a non-sensitive blank/test page.
 
-Expected: each uses direct AX insertion or the paste fallback; unsupported/secure fields fail safely or use copy-only mode. Record which route appears to be used and each app version.
+Expected: Codex uses a focused global Command-V event matching the proven manual paste path; the other targets use direct AX insertion, Unicode keyboard insertion, or a verified paste fallback. Codex accepts the transcript as text without interpreting it as an attachment. When the Codex editor does not expose a verifiable Accessibility value, the HUD accurately reports **Paste sent**; other unsupported or ambiguous fields report **Insertion unconfirmed**. The prior clipboard is restored in either case. Record which route appears to be used and each app version.
 
 ## 11. Clipboard preservation
 
@@ -124,7 +125,7 @@ Expected: each uses direct AX insertion or the paste fallback; unsupported/secur
 5. Paste and verify `NEWER-VALUE` remains; MacDictate must not restore the older snapshot over it.
 6. Enable **Leave transcription on clipboard**, repeat, and verify the transcript intentionally remains instead.
 
-Expected: unchanged clipboard snapshots are restored; any later pasteboard generation wins.
+Expected: clipboard snapshots are restored after verified and unverified automatic paste attempts; any later pasteboard generation wins. An unverified insertion reports **Insertion unconfirmed** without silently replacing the clipboard. With **Leave transcription on clipboard** enabled, retaining the transcript is intentional.
 
 ## 12. Rejected API key and quota
 

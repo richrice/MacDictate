@@ -21,16 +21,38 @@ private final class MockAccessibilityPermission: AccessibilityPermissionProvidin
 private final class MockDirectInserter: DirectTextInserting {
     var calls = 0
     var error: Error?
-    func insertDirectly(_ text: String, target: TargetApplication) throws {
+    var result: EventTextInsertionResult = .verified
+
+    func insertDirectly(
+        _ text: String,
+        target: TargetApplication
+    ) async throws -> EventTextInsertionResult {
         calls += 1
         if let error { throw error }
+        return result
+    }
+}
+
+@MainActor
+private final class MockKeyboardInserter: KeyboardTextInserting {
+    var calls = 0
+    var result: EventTextInsertionResult = .verified
+
+    func type(_ text: String, target: TargetApplication) async throws -> EventTextInsertionResult {
+        calls += 1
+        return result
     }
 }
 
 @MainActor
 private final class MockPasteInserter: PasteTextInserting {
     var calls = 0
-    func paste(_ text: String, target: TargetApplication) async throws { calls += 1 }
+    var result: EventTextInsertionResult = .verified
+
+    func paste(_ text: String, target: TargetApplication) async throws -> EventTextInsertionResult {
+        calls += 1
+        return result
+    }
 }
 
 @MainActor
@@ -99,11 +121,14 @@ final class StorageInsertionAndPrivacyTests: XCTestCase {
         let permission = MockAccessibilityPermission()
         let direct = MockDirectInserter()
         direct.error = TextInsertionError.accessibilityRejected("unsupported")
+        let keyboard = MockKeyboardInserter()
+        keyboard.result = .failed
         let paste = MockPasteInserter()
         let clipboard = MockClipboard()
         let service = DefaultTextInsertionService(
             permissionManager: permission,
             directInserter: direct,
+            keyboardInserter: keyboard,
             pasteInserter: paste,
             clipboard: clipboard
         )
@@ -112,18 +137,195 @@ final class StorageInsertionAndPrivacyTests: XCTestCase {
         let outcome = try await service.insert("hello", target: target)
         XCTAssertEqual(outcome, .clipboardPaste)
         XCTAssertEqual(direct.calls, 1)
+        XCTAssertEqual(keyboard.calls, 1)
         XCTAssertEqual(paste.calls, 1)
+    }
+
+    func testVerifiedKeyboardInsertionSkipsPasteFallback() async throws {
+        let permission = MockAccessibilityPermission()
+        let direct = MockDirectInserter()
+        direct.error = TextInsertionError.accessibilityRejected("unsupported")
+        let keyboard = MockKeyboardInserter()
+        let paste = MockPasteInserter()
+        let clipboard = MockClipboard()
+        let service = DefaultTextInsertionService(
+            permissionManager: permission,
+            directInserter: direct,
+            keyboardInserter: keyboard,
+            pasteInserter: paste,
+            clipboard: clipboard
+        )
+
+        let outcome = try await service.insert(
+            "hello",
+            target: TargetApplication(processIdentifier: 1, bundleIdentifier: nil, name: "Test")
+        )
+
+        XCTAssertEqual(outcome, .keyboardEvents)
+        XCTAssertEqual(keyboard.calls, 1)
+        XCTAssertEqual(paste.calls, 0)
+        XCTAssertNil(clipboard.text)
+    }
+
+    func testUnverifiedDirectInsertionStopsBeforeRiskingDuplicateEvents() async throws {
+        let permission = MockAccessibilityPermission()
+        let direct = MockDirectInserter()
+        direct.result = .unverified
+        let keyboard = MockKeyboardInserter()
+        let paste = MockPasteInserter()
+        let clipboard = MockClipboard()
+        let service = DefaultTextInsertionService(
+            permissionManager: permission,
+            directInserter: direct,
+            keyboardInserter: keyboard,
+            pasteInserter: paste,
+            clipboard: clipboard
+        )
+
+        let outcome = try await service.insert(
+            "keep me",
+            target: TargetApplication(processIdentifier: 1, bundleIdentifier: nil, name: "Test")
+        )
+
+        XCTAssertEqual(outcome, .automaticInsertionUnverified)
+        XCTAssertEqual(keyboard.calls, 0)
+        XCTAssertEqual(paste.calls, 0)
+        XCTAssertNil(clipboard.text)
+    }
+
+    func testUnverifiedKeyboardInsertionDoesNotRiskDuplicatePaste() async throws {
+        let permission = MockAccessibilityPermission()
+        let direct = MockDirectInserter()
+        direct.error = TextInsertionError.accessibilityRejected("unsupported")
+        let keyboard = MockKeyboardInserter()
+        keyboard.result = .unverified
+        let paste = MockPasteInserter()
+        let clipboard = MockClipboard()
+        let service = DefaultTextInsertionService(
+            permissionManager: permission,
+            directInserter: direct,
+            keyboardInserter: keyboard,
+            pasteInserter: paste,
+            clipboard: clipboard
+        )
+
+        let outcome = try await service.insert(
+            "keep me",
+            target: TargetApplication(processIdentifier: 1, bundleIdentifier: nil, name: "Test")
+        )
+
+        XCTAssertEqual(outcome, .automaticInsertionUnverified)
+        XCTAssertEqual(paste.calls, 0, "An unverified keyboard attempt may have succeeded; pasting could duplicate it")
+        XCTAssertNil(clipboard.text)
+    }
+
+    func testUnverifiedPasteIsNotReportedAsSuccessful() async throws {
+        let permission = MockAccessibilityPermission()
+        let direct = MockDirectInserter()
+        direct.error = TextInsertionError.accessibilityRejected("unsupported")
+        let keyboard = MockKeyboardInserter()
+        keyboard.result = .failed
+        let paste = MockPasteInserter()
+        paste.result = .unverified
+        let clipboard = MockClipboard()
+        let service = DefaultTextInsertionService(
+            permissionManager: permission,
+            directInserter: direct,
+            keyboardInserter: keyboard,
+            pasteInserter: paste,
+            clipboard: clipboard
+        )
+
+        let outcome = try await service.insert(
+            "manual fallback",
+            target: TargetApplication(processIdentifier: 1, bundleIdentifier: nil, name: "Test")
+        )
+
+        XCTAssertEqual(outcome, .automaticInsertionUnverified)
+        XCTAssertEqual(paste.calls, 1)
+        XCTAssertNil(clipboard.text)
+    }
+
+    func testCodexUsesProvenPasteRouteWithoutTryingAXOrUnicodeEvents() async throws {
+        let permission = MockAccessibilityPermission()
+        let direct = MockDirectInserter()
+        let keyboard = MockKeyboardInserter()
+        let paste = MockPasteInserter()
+        let clipboard = MockClipboard()
+        let service = DefaultTextInsertionService(
+            permissionManager: permission,
+            directInserter: direct,
+            keyboardInserter: keyboard,
+            pasteInserter: paste,
+            clipboard: clipboard
+        )
+
+        let outcome = try await service.insert(
+            "hello Codex",
+            target: TargetApplication(
+                processIdentifier: 1,
+                bundleIdentifier: "com.openai.codex",
+                name: "ChatGPT"
+            )
+        )
+
+        XCTAssertEqual(outcome, .clipboardPaste)
+        XCTAssertEqual(direct.calls, 0)
+        XCTAssertEqual(keyboard.calls, 0)
+        XCTAssertEqual(paste.calls, 1)
+        XCTAssertNil(clipboard.text)
+    }
+
+    func testUnverifiableCodexPasteIsReportedAsDispatched() async throws {
+        let permission = MockAccessibilityPermission()
+        let direct = MockDirectInserter()
+        let keyboard = MockKeyboardInserter()
+        let paste = MockPasteInserter()
+        paste.result = .unverified
+        let clipboard = MockClipboard()
+        let service = DefaultTextInsertionService(
+            permissionManager: permission,
+            directInserter: direct,
+            keyboardInserter: keyboard,
+            pasteInserter: paste,
+            clipboard: clipboard
+        )
+
+        let outcome = try await service.insert(
+            "hello Codex",
+            target: TargetApplication(
+                processIdentifier: 1,
+                bundleIdentifier: "com.openai.codex",
+                name: "ChatGPT"
+            )
+        )
+
+        XCTAssertEqual(outcome, .pasteDispatched)
+        XCTAssertEqual(direct.calls, 0)
+        XCTAssertEqual(keyboard.calls, 0)
+        XCTAssertEqual(paste.calls, 1)
+        XCTAssertNil(clipboard.text)
+    }
+
+    func testUnicodeEventChunksPreserveCharactersAndRespectNormalLimit() {
+        let text = "1234567890123456789é👩🏽‍💻tail"
+        let chunks = UnicodeKeyboardTextInserter.chunks(text, maximumUTF16Length: 20)
+
+        XCTAssertEqual(chunks.joined(), text)
+        XCTAssertTrue(chunks.allSatisfy { $0.utf16.count <= 20 })
     }
 
     func testMissingAccessibilityPermissionCopiesOnly() async throws {
         let permission = MockAccessibilityPermission()
         permission.allowed = false
         let direct = MockDirectInserter()
+        let keyboard = MockKeyboardInserter()
         let paste = MockPasteInserter()
         let clipboard = MockClipboard()
         let service = DefaultTextInsertionService(
             permissionManager: permission,
             directInserter: direct,
+            keyboardInserter: keyboard,
             pasteInserter: paste,
             clipboard: clipboard
         )
@@ -135,6 +337,7 @@ final class StorageInsertionAndPrivacyTests: XCTestCase {
         XCTAssertEqual(outcome, .copiedForManualPaste)
         XCTAssertEqual(clipboard.text, "manual paste")
         XCTAssertEqual(direct.calls, 0)
+        XCTAssertEqual(keyboard.calls, 0)
         XCTAssertEqual(paste.calls, 0)
     }
 
@@ -164,4 +367,3 @@ final class StorageInsertionAndPrivacyTests: XCTestCase {
         XCTAssertFalse(SecretRedactor.redact("header was \(bearer)").contains("some.opaque-token+value"))
     }
 }
-

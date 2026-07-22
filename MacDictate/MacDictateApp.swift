@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let insertionService = DefaultTextInsertionService(
             permissionManager: accessibilityPermission,
             directInserter: AccessibilityDirectInserter(),
+            keyboardInserter: UnicodeKeyboardTextInserter(),
             pasteInserter: ClipboardPasteInserter(clipboard: clipboard),
             clipboard: clipboard
         )

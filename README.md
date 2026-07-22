@@ -89,15 +89,19 @@ The explicit workflow states are `idle`, `preparing`, `recording`, `transcribing
 - A Carbon global hotkey provides both key-down and key-up events and consumes the shortcut before the foreground app receives it. Auto-repeat is ignored. Settings provides several modifier/Space alternatives and reports registration conflicts.
 - AVAudioEngine captures the system-selected input device. AVAudioConverter writes mono 16 kHz, 16-bit linear PCM in a temporary WAV file. A five-minute ceiling keeps the largest default upload near 9.6 MB before WAV overhead.
 - URLSession posts binary-safe multipart form data to `https://api.openai.com/v1/audio/transcriptions`. HTTP 429 and transient 5xx responses receive at most one delayed retry, honoring a numeric `Retry-After` header up to five seconds; authentication and other permanent 4xx failures are not retried.
-- The app first tries the Accessibility selected-text attribute. If that control rejects direct insertion, MacDictate snapshots every pasteboard item's representations, posts Command-V from a private event source once physical modifier keys are released, and restores the snapshot only if the pasteboard change count still matches. A newer clipboard value is never overwritten. Temporary transcript writes are marked with `org.nspasteboard.TransientType` so clipboard managers skip them.
+- The app first tries the Accessibility selected-text attribute, then verifies that the exact expected value remains present rather than trusting the setter's return code. If that control rejects direct insertion, MacDictate sends Unicode keyboard events directly to the captured application and applies the same verification.
+- The Codex desktop composer uses a focused global Command-V event because its controlled browser editor can accept an Accessibility write without reflecting it in the visible composer, while a physical Command-V works. Other targets use paste only after earlier attempts are observably absent.
+- Every automatic paste snapshots all pasteboard item representations, temporarily writes the transcript, and restores the snapshot after the verification window if no newer pasteboard generation appeared. Temporary transcript writes are marked with `org.nspasteboard.TransientType` so clipboard managers skip them.
+- Automatic delivery is never considered successful merely because an API call or event post returned successfully. If the result cannot be verified, MacDictate stops before risking a duplicate fallback and restores the pre-dictation clipboard. Codex reports **Paste sent** when its editor accepts the event but does not expose a verifiable Accessibility value; other ambiguous outcomes report **Insertion unconfirmed**.
 - If Accessibility access is unavailable, the transcript stays on the clipboard and the HUD says to press Command-V manually.
 
 MacDictate never synthesizes Return or Enter.
 
 ### Application-specific notes
 
-- **Apple Terminal and iTerm2:** their text views may reject the Accessibility selected-text attribute. The Command-V fallback is expected and preserves the prior clipboard when no other process changes it.
-- **VS Code, Cursor, and browser editors:** Electron/browser accessibility trees vary by version and editor. Direct insertion may work; otherwise the paste fallback is used.
+- **Apple Terminal and iTerm2:** their text views may reject the Accessibility selected-text attribute. Unicode keyboard insertion or the verified Command-V fallback is expected.
+- **Codex desktop composer:** MacDictate uses the global focused paste route that matches a physical Command-V and keeps the transcript available long enough for the browser editor to consume it.
+- **VS Code, Cursor, and browser editors:** Electron/browser accessibility trees vary by version and editor. Direct insertion may work; otherwise MacDictate uses verified keyboard or paste delivery.
 - **SwiftUI TextEditor and standard AppKit text controls:** direct Accessibility insertion normally works.
 - **Password/secure fields:** macOS may intentionally refuse insertion.
 - **Remote desktop, keyboard-remapping, and clipboard-manager tools:** these can reserve the hotkey or change the clipboard before restoration. Select another shortcut or let the newer clipboard remain.
@@ -145,7 +149,7 @@ Use the menu's **Open Microphone Settings**, enable MacDictate, quit it, and reo
 
 ### Text is copied but not inserted
 
-Enable MacDictate in **System Settings → Privacy & Security → Accessibility**, then relaunch it. Copy-only mode is intentional when permission is denied. Some target controls still require the paste fallback.
+Enable MacDictate in **System Settings → Privacy & Security → Accessibility**, then relaunch it. Copy-only mode is intentional when permission is denied. If the HUD says **Insertion unconfirmed**, MacDictate attempted automatic insertion but could not verify the focused control changed, so it deliberately did not claim success or risk a duplicate fallback. The prior clipboard is preserved unless **Leave transcription on clipboard** is enabled.
 
 ### The old clipboard was not restored
 
@@ -186,6 +190,6 @@ The Keychain item is independent of the app bundle; delete it explicitly with on
 
 ## Validation and architecture
 
-Automated coverage includes the state machine, short-press policy, off-main audio tap execution, multipart fields and binary content, authorization construction, plain text and JSON error parsing, retry policy and in-flight cancellation through URLProtocol, `Retry-After` parsing, a mock credential store, pasteboard restoration races, the transient clipboard marker, insertion fallback order, temporary-file cleanup, and secret redaction. A coordinator suite drives the full dictation workflow against mocks: happy path, short press, cancel during transcription, silent and empty recordings, missing API key, and re-pressing the shortcut during the terminal-state display.
+Automated coverage includes the state machine, short-press policy, off-main audio tap execution, multipart fields and binary content, authorization construction, plain text and JSON error parsing, retry policy and in-flight cancellation through URLProtocol, `Retry-After` parsing, a mock credential store, pasteboard restoration races, the transient clipboard marker, Unicode chunk integrity, verified/unverified insertion fallback order, temporary-file cleanup, and secret redaction. A coordinator suite drives the full dictation workflow against mocks, including truthful unverified-insertion messaging.
 
 Hardware, global input, permission prompts, and application-specific Accessibility behavior require manual testing. Follow [docs/MANUAL_TEST_PLAN.md](docs/MANUAL_TEST_PLAN.md).

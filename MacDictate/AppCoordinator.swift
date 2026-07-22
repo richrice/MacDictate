@@ -281,12 +281,18 @@ final class AppCoordinator: NSObject {
             }
 
             var completionMessage = "Transcription complete"
+            var insertionOutcome: TextInsertionOutcome?
             if settings.automaticallyInsert {
                 try stateMachine.transition(to: .inserting)
                 let outcome = try await insertionService.insert(transcript, target: target)
+                insertionOutcome = outcome
                 switch outcome {
-                case .accessibility, .clipboardPaste:
+                case .accessibility, .keyboardEvents, .clipboardPaste:
                     completionMessage = "Text inserted"
+                case .pasteDispatched:
+                    completionMessage = "Paste sent"
+                case .automaticInsertionUnverified:
+                    completionMessage = "Insertion unconfirmed"
                 case .copiedForManualPaste:
                     completionMessage = "Copied—press ⌘V to paste"
                 }
@@ -298,7 +304,18 @@ final class AppCoordinator: NSObject {
             // When automatic insertion is off, the transcript was already copied above.
             if settings.copyToClipboard, settings.automaticallyInsert {
                 insertionService.copy(transcript)
-                completionMessage = "Inserted and copied"
+                if let insertionOutcome {
+                    switch insertionOutcome {
+                    case .accessibility, .keyboardEvents, .clipboardPaste:
+                        completionMessage = "Inserted and copied"
+                    case .pasteDispatched:
+                        completionMessage = "Paste sent and copied"
+                    case .automaticInsertionUnverified:
+                        completionMessage = "Insertion unconfirmed"
+                    case .copiedForManualPaste:
+                        completionMessage = "Copied—press ⌘V to paste"
+                    }
+                }
             }
             try stateMachine.transition(to: .completed(message: completionMessage))
             playSound(named: "Glass")
