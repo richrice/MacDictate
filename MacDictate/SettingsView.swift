@@ -146,11 +146,20 @@ struct SettingsView: View {
             Section("Push to talk") {
                 LabeledContent("Current shortcut", value: settings.hotkey.displayName)
                 Picker("Change shortcut", selection: $settings.hotkey) {
-                    ForEach(HotkeyShortcut.presets) { shortcut in
-                        Text(shortcut.displayName).tag(shortcut)
+                    ForEach(HotkeyShortcut.presetGroups) { group in
+                        Section(group.name) {
+                            ForEach(group.shortcuts) { shortcut in
+                                Text(shortcut.displayName).tag(shortcut)
+                            }
+                        }
                     }
                 }
-                Button("Restore Default (⌥ Space)") { settings.restoreDefaultHotkey() }
+                Button("Restore Default (\(HotkeyShortcut.defaultShortcut.displayName))") {
+                    settings.restoreDefaultHotkey()
+                }
+                Text("Bare function keys (F13–F19) are reserved system-wide by MacDictate while it is running. These keys are typically available only on full-size or extended external keyboards.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section("Registration") {
                 HStack(alignment: .firstTextBaseline) {
@@ -311,4 +320,3 @@ final class SettingsWindowController {
         window.makeKeyAndOrderFront(nil)
     }
 }
-

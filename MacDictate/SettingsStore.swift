@@ -23,6 +23,12 @@ enum TranscriptionLanguage: String, CaseIterable, Codable, Identifiable, Sendabl
     var apiValue: String? { self == .english ? "en" : nil }
 }
 
+struct HotkeyPresetGroup: Identifiable, Sendable {
+    let name: String
+    let shortcuts: [HotkeyShortcut]
+    var id: String { name }
+}
+
 struct HotkeyShortcut: Codable, Hashable, Identifiable, Sendable {
     let keyCode: UInt32
     let carbonModifiers: UInt32
@@ -36,12 +42,33 @@ struct HotkeyShortcut: Codable, Hashable, Identifiable, Sendable {
         displayName: "⌥ Space"
     )
 
-    static let presets: [HotkeyShortcut] = [
-        .defaultShortcut,
-        HotkeyShortcut(keyCode: UInt32(kVK_Space), carbonModifiers: UInt32(controlKey), displayName: "⌃ Space"),
-        HotkeyShortcut(keyCode: UInt32(kVK_Space), carbonModifiers: UInt32(controlKey | optionKey), displayName: "⌃⌥ Space"),
-        HotkeyShortcut(keyCode: UInt32(kVK_Space), carbonModifiers: UInt32(cmdKey | shiftKey), displayName: "⌘⇧ Space")
+    static let presetGroups: [HotkeyPresetGroup] = [
+        HotkeyPresetGroup(name: "Space", shortcuts: [
+            .defaultShortcut,
+            HotkeyShortcut(keyCode: UInt32(kVK_Space), carbonModifiers: UInt32(controlKey), displayName: "⌃ Space"),
+            HotkeyShortcut(keyCode: UInt32(kVK_Space), carbonModifiers: UInt32(controlKey | optionKey), displayName: "⌃⌥ Space"),
+            HotkeyShortcut(keyCode: UInt32(kVK_Space), carbonModifiers: UInt32(cmdKey | shiftKey), displayName: "⌘⇧ Space"),
+            HotkeyShortcut(keyCode: UInt32(kVK_Space), carbonModifiers: UInt32(optionKey | shiftKey), displayName: "⌥⇧ Space"),
+            HotkeyShortcut(keyCode: UInt32(kVK_Space), carbonModifiers: UInt32(controlKey | shiftKey), displayName: "⌃⇧ Space"),
+            HotkeyShortcut(keyCode: UInt32(kVK_Space), carbonModifiers: UInt32(controlKey | optionKey | cmdKey), displayName: "⌃⌥⌘ Space")
+        ]),
+        HotkeyPresetGroup(name: "Function keys", shortcuts: [
+            HotkeyShortcut(keyCode: UInt32(kVK_F13), carbonModifiers: 0, displayName: "F13"),
+            HotkeyShortcut(keyCode: UInt32(kVK_F14), carbonModifiers: 0, displayName: "F14"),
+            HotkeyShortcut(keyCode: UInt32(kVK_F15), carbonModifiers: 0, displayName: "F15"),
+            HotkeyShortcut(keyCode: UInt32(kVK_F16), carbonModifiers: 0, displayName: "F16"),
+            HotkeyShortcut(keyCode: UInt32(kVK_F17), carbonModifiers: 0, displayName: "F17"),
+            HotkeyShortcut(keyCode: UInt32(kVK_F18), carbonModifiers: 0, displayName: "F18"),
+            HotkeyShortcut(keyCode: UInt32(kVK_F19), carbonModifiers: 0, displayName: "F19")
+        ]),
+        HotkeyPresetGroup(name: "Other keys", shortcuts: [
+            HotkeyShortcut(keyCode: UInt32(kVK_ANSI_D), carbonModifiers: UInt32(controlKey | optionKey), displayName: "⌃⌥ D"),
+            HotkeyShortcut(keyCode: UInt32(kVK_ANSI_M), carbonModifiers: UInt32(controlKey | optionKey), displayName: "⌃⌥ M"),
+            HotkeyShortcut(keyCode: UInt32(kVK_ANSI_Grave), carbonModifiers: UInt32(optionKey), displayName: "⌥ `")
+        ])
     ]
+
+    static let presets: [HotkeyShortcut] = presetGroups.flatMap(\.shortcuts)
 }
 
 @MainActor

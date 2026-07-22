@@ -54,12 +54,13 @@ Expected: one generic-password item exists; no key appears in `defaults read com
 
 ## 5. Hotkey press and release
 
-1. Focus an empty TextEdit document or SwiftUI TextEditor.
-2. Press and hold Option-Space. Verify the target stays focused, the menu icon changes to a microphone, and the non-activating HUD shows a red mic and increasing elapsed time.
-3. Continue holding for two seconds; verify key repeat does not restart the timer or create another HUD.
-4. Speak a short instruction and release Space while Option remains down.
-5. Verify recording stops immediately and the HUD changes to **Transcribing…**.
-6. Tap Option-Space for less than 250 ms.
+1. Open Settings > Hotkey and verify the picker groups presets under **Space**, **Function keys**, and **Other keys**. Select F13, verify pressing and releasing it starts and stops dictation, then restore the default shortcut.
+2. Focus an empty TextEdit document or SwiftUI TextEditor.
+3. Press and hold Option-Space. Verify the target stays focused, the menu icon changes to a microphone, and the non-activating HUD shows a red mic and increasing elapsed time.
+4. Continue holding for two seconds; verify key repeat does not restart the timer or create another HUD.
+5. Speak a short instruction and release Space while Option remains down.
+6. Verify recording stops immediately and the HUD changes to **Transcribing…**.
+7. Tap Option-Space for less than 250 ms.
 
 Expected: the release sends one request; the short tap reports cancellation and makes no chargeable transcription request.
 
