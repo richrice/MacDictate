@@ -112,7 +112,7 @@ final class SettingsStore: ObservableObject {
             Key.automaticallyInsert: true,
             Key.copyToClipboard: false,
             Key.maximumRecordingDuration: 300.0,
-            Key.model: TranscriptionModel.mini.rawValue,
+            Key.model: TranscriptionModel.full.rawValue,
             Key.language: TranscriptionLanguage.english.rawValue,
             Key.prompt: Self.defaultPrompt,
             Key.debugLogging: false
@@ -124,7 +124,7 @@ final class SettingsStore: ObservableObject {
         automaticallyInsert = defaults.bool(forKey: Key.automaticallyInsert)
         copyToClipboard = defaults.bool(forKey: Key.copyToClipboard)
         maximumRecordingDuration = min(max(defaults.double(forKey: Key.maximumRecordingDuration), 10), 300)
-        model = TranscriptionModel(rawValue: defaults.string(forKey: Key.model) ?? "") ?? .mini
+        model = TranscriptionModel(rawValue: defaults.string(forKey: Key.model) ?? "") ?? .full
         language = TranscriptionLanguage(rawValue: defaults.string(forKey: Key.language) ?? "") ?? .english
         transcriptionPrompt = defaults.string(forKey: Key.prompt) ?? Self.defaultPrompt
         debugLogging = defaults.bool(forKey: Key.debugLogging)

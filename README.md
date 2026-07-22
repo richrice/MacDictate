@@ -80,7 +80,7 @@ The app version comes from the tag (the `MARKETING_VERSION` in `project.yml` is 
 5. Grant Accessibility access when automatic insertion is first used, or open **System Settings → Privacy & Security → Accessibility** from MacDictate.
 6. Focus an editable control, hold Option-Space for at least 250 ms, speak, and release.
 
-The default model is `gpt-4o-mini-transcribe`. `gpt-4o-transcribe` is available in the OpenAI settings. Language can be English (`en`) or Automatic. The editable developer-vocabulary prompt is context supplied to the model; it does not guarantee spelling.
+The default model is `gpt-4o-transcribe`. `gpt-4o-mini-transcribe` is available in the OpenAI settings. Language can be English (`en`) or Automatic. The editable developer-vocabulary prompt is context supplied to the model; it does not guarantee spelling.
 
 ## How it works
 
