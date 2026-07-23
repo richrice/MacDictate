@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
 import Foundation
 
 struct TargetApplication: Equatable, Sendable {
@@ -252,19 +253,21 @@ final class ClipboardPasteInserter: PasteTextInserting {
                 target: target
             )
 
-            let source = CGEventSource(
-                stateID: target.bundleIdentifier == "com.openai.codex"
-                    ? .hidSystemState
-                    : .privateState
+            let requiresFrontmostHIDEvents = Self.requiresFrontmostHIDEvents(
+                bundleIdentifier: target.bundleIdentifier
             )
-            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else {
+            let source = CGEventSource(
+                stateID: requiresFrontmostHIDEvents ? .hidSystemState : .privateState
+            )
+            let pasteKeyCode = Self.pasteVirtualKeyCode()
+            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: pasteKeyCode, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: pasteKeyCode, keyDown: false) else {
                 throw TextInsertionError.eventCreationFailed
             }
             keyDown.flags = .maskCommand
             keyUp.flags = .maskCommand
 
-            if target.bundleIdentifier == "com.openai.codex" {
+            if requiresFrontmostHIDEvents {
                 try await waitUntilFrontmost(target)
                 keyDown.post(tap: .cghidEventTap)
                 try await Task.sleep(for: .milliseconds(12))
@@ -275,7 +278,7 @@ final class ClipboardPasteInserter: PasteTextInserting {
             }
 
             let result = try await verification.result(
-                timeout: target.bundleIdentifier == "com.openai.codex"
+                timeout: requiresFrontmostHIDEvents
                     ? .seconds(2)
                     : .nanoseconds(Int64(pasteDelayNanoseconds))
             )
@@ -284,6 +287,58 @@ final class ClipboardPasteInserter: PasteTextInserting {
         } catch {
             _ = clipboard.restore(snapshot, ifChangeCountIs: transcriptChangeCount)
             throw error
+        }
+    }
+
+    static func requiresFrontmostHIDEvents(bundleIdentifier: String?) -> Bool {
+        bundleIdentifier == "com.openai.codex"
+            || bundleIdentifier == "com.googlecode.iterm2"
+    }
+
+    private static func pasteVirtualKeyCode() -> CGKeyCode {
+        let qwertyVKeyCode = CGKeyCode(9)
+        guard let inputSource = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
+              let rawLayoutData = TISGetInputSourceProperty(
+                  inputSource,
+                  kTISPropertyUnicodeKeyLayoutData
+              ) else {
+            return qwertyVKeyCode
+        }
+
+        let layoutData = Unmanaged<CFData>
+            .fromOpaque(rawLayoutData)
+            .takeUnretainedValue() as Data
+        return layoutData.withUnsafeBytes { buffer in
+            guard let layout = buffer.baseAddress?.assumingMemoryBound(
+                to: UCKeyboardLayout.self
+            ) else {
+                return qwertyVKeyCode
+            }
+
+            var characters = [UniChar](repeating: 0, count: 4)
+            let keyboardType = UInt32(LMGetKbdType())
+            for keyCode in UInt16(0)..<UInt16(128) {
+                var deadKeyState = UInt32(0)
+                var characterCount = 0
+                let status = UCKeyTranslate(
+                    layout,
+                    keyCode,
+                    UInt16(kUCKeyActionDisplay),
+                    0,
+                    keyboardType,
+                    UInt32(kUCKeyTranslateNoDeadKeysMask),
+                    &deadKeyState,
+                    characters.count,
+                    &characterCount,
+                    &characters
+                )
+                if status == noErr,
+                   characterCount > 0,
+                   Unicode.Scalar(characters[0]) == "v" {
+                    return CGKeyCode(keyCode)
+                }
+            }
+            return qwertyVKeyCode
         }
     }
 }

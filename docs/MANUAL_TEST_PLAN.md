@@ -178,17 +178,21 @@ Expected: no overlap, crash, duplicate transcript, retained temporary file, or r
 
 ## 16. Recording limit, silence, and microphone disconnection
 
-1. Set Maximum duration to 10 seconds.
-2. Hold the shortcut longer than 10 seconds and verify recording automatically stops and transcribes once.
-3. Hold for one second in silence and verify a quiet "No speech detected" cancellation (no error sound, no Copy Last Error Details entry) with no API request where the audio threshold is met.
-4. In MacDictate, select a built-in microphone, then select a removable USB, Bluetooth, or Continuity Camera microphone. Verify macOS **System Settings → Sound → Input** does not change.
-5. Quit and relaunch MacDictate. Verify the removable microphone remains selected and the built-in microphone is retained as the previous input.
-6. Begin recording, disconnect or power off the selected microphone, and verify recording switches to the previous input. Confirm the HUD changes to its name and its level meter responds.
-7. Quit and relaunch again. Verify the fallback input is now the selected input and complete another recording.
-8. Repeat the disconnect with both the selected and previous inputs unavailable. Verify an interruption/device error appears—never a silent switch to an arbitrary device or a hallucinated transcript.
-9. With Bluetooth headphones connected, verify the first dictation after launch succeeds: benign input configuration changes at engine start (for example a hands-free profile switch) must recover silently rather than showing "The microphone could not start."
+1. Connect Bluetooth headphones and play music in Chrome before launching MacDictate.
+2. Launch MacDictate and leave it idle. Verify playback volume and quality remain unchanged.
+3. Dictate while the music continues. Verify playback stays muted even if the Bluetooth route changes during recording.
+4. Release the shortcut. Verify playback remains muted while the transcription is delivered, then the prior volume returns and playback resumes directly at high quality when the completion message appears.
+5. Set Maximum duration to 10 seconds.
+6. Hold the shortcut longer than 10 seconds and verify recording automatically stops and transcribes once.
+7. Hold for one second in silence and verify a quiet "No speech detected" cancellation (no error sound, no Copy Last Error Details entry) with no API request where the audio threshold is met.
+8. In MacDictate, select a built-in microphone, then select a removable USB, Bluetooth, or Continuity Camera microphone. Verify macOS **System Settings → Sound → Input** does not change.
+9. Quit and relaunch MacDictate. Verify the removable microphone remains selected and the built-in microphone is retained as the previous input.
+10. Begin recording, disconnect or power off the selected microphone, and verify recording switches to the previous input. Confirm the HUD changes to its name and its level meter responds.
+11. Quit and relaunch again. Verify the fallback input is now the selected input and complete another recording.
+12. Repeat the disconnect with both the selected and previous inputs unavailable. Verify an interruption/device error appears—never a silent switch to an arbitrary device or a hallucinated transcript.
+13. With Bluetooth headphones connected, verify the first dictation after launch succeeds: benign input configuration changes at engine start (for example a hands-free profile switch) must recover silently rather than showing "The microphone could not start."
 
-Expected: taps and engine resources are released and the app recovers without relaunch.
+Expected: MacDictate owns the microphone only while preparing or recording, keeps every transient Bluetooth output route muted until delivery completes, restores all affected routes, and recovers without relaunch.
 
 ## 17. Relaunch and privacy residue
 

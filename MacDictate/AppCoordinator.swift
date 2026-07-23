@@ -55,6 +55,7 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
     private var hotkeyCancellable: AnyCancellable?
     private var workspaceObserver: NSObjectProtocol?
     private var settingsObserver: NSObjectProtocol?
+    private var activeWorkflowID: UUID?
     private var workflowTask: Task<Void, Never>?
     private var muteTask: Task<Void, Never>?
     private var maximumDurationTask: Task<Void, Never>?
@@ -169,20 +170,25 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
             fail(error)
             return
         }
+        let workflowID = UUID()
+        activeWorkflowID = workflowID
+        beginSystemAudioMuting(for: workflowID)
 
         workflowTask = Task { [weak self] in
             guard let self else { return }
             do {
                 try await self.audioRecorder.prepare()
                 try Task.checkCancellation()
+                guard self.activeWorkflowID == workflowID else { return }
                 try self.audioRecorder.start()
                 try self.stateMachine.transition(to: .recording(startedAt: Date()))
                 self.playSound(named: "Pop")
-                self.scheduleMute()
-                self.scheduleMaximumDuration()
+                self.scheduleMaximumDuration(for: workflowID)
             } catch is CancellationError {
+                guard self.activeWorkflowID == workflowID else { return }
                 self.cancelActive(showMessage: true)
             } catch {
+                guard self.activeWorkflowID == workflowID else { return }
                 self.fail(error)
             }
         }
@@ -196,7 +202,12 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
             // Measure the hold from key-down, not recording start, so prepare()
             // latency cannot cancel a press the user legitimately held.
             let reference = hotkeyPressedAt ?? startedAt
-            finishRecording(elapsed: Date().timeIntervalSince(reference), enforceMinimum: true)
+            guard let activeWorkflowID else { return }
+            finishRecording(
+                elapsed: Date().timeIntervalSince(reference),
+                enforceMinimum: true,
+                workflowID: activeWorkflowID
+            )
         default:
             break
         }
@@ -204,14 +215,13 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
 
     func cancelActive(showMessage: Bool = true) {
         guard stateMachine.state.isActive else { return }
+        activeWorkflowID = nil
         workflowTask?.cancel()
         workflowTask = nil
         maximumDurationTask?.cancel()
         maximumDurationTask = nil
         audioRecorder.cancel()
-        muteTask?.cancel()
-        muteTask = nil
-        audioOutputController.restoreAfterDictation()
+        restoreSystemAudio()
         do {
             try stateMachine.transition(to: .cancelled(message: nil))
             if showMessage { AppLogger.lifecycle.info("Dictation cancelled") }
@@ -225,26 +235,29 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
     /// sound, no error details, just a short status message.
     private func cancelBenignly(message: String) {
         guard stateMachine.state.isActive else { return }
+        activeWorkflowID = nil
         workflowTask?.cancel()
         workflowTask = nil
         maximumDurationTask?.cancel()
         maximumDurationTask = nil
         audioRecorder.cancel()
-        muteTask?.cancel()
-        muteTask = nil
-        audioOutputController.restoreAfterDictation()
+        restoreSystemAudio()
         try? stateMachine.transition(to: .cancelled(message: message))
         scheduleReset()
     }
 
-    private func finishRecording(elapsed: TimeInterval, enforceMinimum: Bool) {
+    private func finishRecording(
+        elapsed: TimeInterval,
+        enforceMinimum: Bool,
+        workflowID: UUID
+    ) {
+        guard activeWorkflowID == workflowID else { return }
         maximumDurationTask?.cancel()
         maximumDurationTask = nil
         if enforceMinimum, !RecordingPolicy.shouldTranscribe(elapsed: elapsed) {
+            activeWorkflowID = nil
             audioRecorder.cancel()
-            muteTask?.cancel()
-            muteTask = nil
-            audioOutputController.restoreAfterDictation()
+            restoreSystemAudio()
             do {
                 try stateMachine.transition(to: .cancelled(message: nil))
                 scheduleReset()
@@ -256,9 +269,6 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
 
         do {
             let recordedAudio = try audioRecorder.stop()
-            muteTask?.cancel()
-            muteTask = nil
-            audioOutputController.restoreAfterDictation()
             playSound(named: "Tink")
             guard !recordedAudio.isEffectivelySilent else {
                 fileCleaner.delete(recordedAudio.fileURL)
@@ -271,16 +281,26 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
             }
             try stateMachine.transition(to: .transcribing)
             workflowTask = Task { [weak self] in
-                await self?.transcribeAndInsert(recordedAudio, target: target)
+                await self?.transcribeAndInsert(
+                    recordedAudio,
+                    target: target,
+                    workflowID: workflowID
+                )
             }
         } catch {
+            guard activeWorkflowID == workflowID else { return }
             fail(error)
         }
     }
 
-    private func transcribeAndInsert(_ recording: RecordedAudio, target: TargetApplication) async {
+    private func transcribeAndInsert(
+        _ recording: RecordedAudio,
+        target: TargetApplication,
+        workflowID: UUID
+    ) async {
         defer { fileCleaner.delete(recording.fileURL) }
         do {
+            guard activeWorkflowID == workflowID else { return }
             guard let key = try credentialStore.load(), !key.isEmpty else {
                 throw TranscriptionError.missingAPIKey
             }
@@ -295,6 +315,7 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
                 configuration: configuration
             )
             try Task.checkCancellation()
+            guard activeWorkflowID == workflowID else { return }
 
             guard !PromptEchoDetector.isLikelyEcho(transcript: transcript, contextPrompt: settings.transcriptionPrompt) else {
                 AppLogger.transcription.info("Discarding a transcription that echoes the context prompt")
@@ -307,6 +328,8 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
             if settings.automaticallyInsert {
                 try stateMachine.transition(to: .inserting)
                 let outcome = try await insertionService.insert(transcript, target: target)
+                try Task.checkCancellation()
+                guard activeWorkflowID == workflowID else { return }
                 insertionOutcome = outcome
                 switch outcome {
                 case .accessibility, .keyboardEvents, .clipboardPaste:
@@ -340,56 +363,72 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
                 }
             }
             try stateMachine.transition(to: .completed(message: completionMessage))
+            restoreSystemAudio()
+            activeWorkflowID = nil
+            workflowTask = nil
             playSound(named: "Glass")
             if settings.debugLogging {
                 AppLogger.transcription.debug("Transcription completed; audio duration \(recording.duration, privacy: .public)s, transcript length \(transcript.count, privacy: .public)")
             }
             scheduleReset()
         } catch is CancellationError {
+            guard activeWorkflowID == workflowID else { return }
             if stateMachine.state.isActive { cancelActive(showMessage: false) }
         } catch TranscriptionError.emptyTranscription {
+            guard activeWorkflowID == workflowID else { return }
             cancelBenignly(message: "No speech detected")
         } catch {
+            guard activeWorkflowID == workflowID else { return }
             fail(error)
         }
     }
 
-    private func scheduleMaximumDuration() {
+    private func scheduleMaximumDuration(for workflowID: UUID) {
         maximumDurationTask?.cancel()
         let duration = settings.maximumRecordingDuration
         maximumDurationTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(duration))
             guard !Task.isCancelled, let self else { return }
+            guard self.activeWorkflowID == workflowID else { return }
             if case let .recording(startedAt) = self.stateMachine.state {
-                self.finishRecording(elapsed: Date().timeIntervalSince(startedAt), enforceMinimum: false)
+                self.finishRecording(
+                    elapsed: Date().timeIntervalSince(startedAt),
+                    enforceMinimum: false,
+                    workflowID: workflowID
+                )
             }
         }
     }
 
-    private func scheduleMute() {
+    private func beginSystemAudioMuting(for workflowID: UUID) {
         guard settings.muteSystemAudioDuringDictation else { return }
-        guard settings.playSounds else {
-            // No start sound to protect; mute immediately.
-            audioOutputController.muteForDictation()
-            return
-        }
+        audioOutputController.prepareForDictation()
+        audioOutputController.muteForDictation()
+        muteTask?.cancel()
         muteTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(150))
-            guard !Task.isCancelled, let self else { return }
-            guard case .recording = self.stateMachine.state else { return }
-            self.audioOutputController.muteForDictation()
+            while !Task.isCancelled, let self {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled else { return }
+                guard self.activeWorkflowID == workflowID else { return }
+                switch self.stateMachine.state {
+                case .preparing, .recording:
+                    break
+                default:
+                    return
+                }
+                self.audioOutputController.muteForDictation()
+            }
         }
     }
 
     private func fail(_ error: Error) {
+        activeWorkflowID = nil
         workflowTask?.cancel()
         workflowTask = nil
         maximumDurationTask?.cancel()
         maximumDurationTask = nil
         audioRecorder.cancel()
-        muteTask?.cancel()
-        muteTask = nil
-        audioOutputController.restoreAfterDictation()
+        restoreSystemAudio()
         let friendly = error.localizedDescription
         lastErrorDetails = SecretRedactor.redact(String(reflecting: error))
         AppLogger.lifecycle.error("Dictation failed: \(friendly, privacy: .public)")
@@ -405,6 +444,12 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         // Errors stay visible longer than routine terminal states so the HUD
         // message can actually be read before the state resets to idle.
         scheduleReset(after: 3.0)
+    }
+
+    private func restoreSystemAudio() {
+        muteTask?.cancel()
+        muteTask = nil
+        audioOutputController.restoreAfterDictation()
     }
 
     private func scheduleReset(after seconds: Double = 1.3) {
@@ -625,8 +670,13 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
 
     @objc private func stopFromMenu() {
         // Menu-initiated stops are always deliberate; skip the short-press minimum.
-        if case let .recording(startedAt) = stateMachine.state {
-            finishRecording(elapsed: Date().timeIntervalSince(startedAt), enforceMinimum: false)
+        if case let .recording(startedAt) = stateMachine.state,
+           let activeWorkflowID {
+            finishRecording(
+                elapsed: Date().timeIntervalSince(startedAt),
+                enforceMinimum: false,
+                workflowID: activeWorkflowID
+            )
         }
     }
 

@@ -2,119 +2,132 @@ import CoreAudio
 
 @MainActor
 protocol SystemAudioOutputControlling: AnyObject {
-    /// Mutes the current default output device, remembering its prior state.
-    /// Idempotent: calling while already muted-by-us is a no-op.
+    /// Captures the user's output state before opening the microphone can change
+    /// the Bluetooth profile.
+    func prepareForDictation()
+    /// Mutes the current default output. Repeated calls cover profile changes.
     func muteForDictation()
-    /// Restores the state saved by muteForDictation and clears it.
-    /// Idempotent: calling with nothing saved is a no-op.
+    /// Applies the pre-dictation state to the original and current output routes.
     func restoreAfterDictation()
 }
 
 @MainActor
 final class SystemAudioOutputController: SystemAudioOutputControlling {
-    private enum SavedValue {
-        case mute(UInt32)
-        case volume(Float32)
-    }
-
     private struct SavedState {
         let deviceID: AudioObjectID
-        let value: SavedValue
+        let mute: UInt32?
+        let volume: Float32?
     }
 
     private var savedState: SavedState?
 
-    func muteForDictation() {
+    func prepareForDictation() {
         guard savedState == nil else { return }
         guard let deviceID = defaultOutputDevice() else { return }
 
-        var muteAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyMute,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain
+        let mute = readUInt32(
+            deviceID: deviceID,
+            selector: kAudioDevicePropertyMute
         )
-
-        if AudioObjectHasProperty(deviceID, &muteAddress) {
-            var isSettable = DarwinBoolean(false)
-            let settableStatus = AudioObjectIsPropertySettable(deviceID, &muteAddress, &isSettable)
-            guard settableStatus == noErr else {
-                AppLogger.audio.warning("Unable to determine whether output mute is settable (status: \(settableStatus, privacy: .public))")
-                return
-            }
-
-            if isSettable.boolValue {
-                mute(deviceID: deviceID, address: &muteAddress)
-                return
-            }
-        }
-
-        var volumeAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyVolumeScalar,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain
+        let volume = readFloat32(
+            deviceID: deviceID,
+            selector: kAudioDevicePropertyVolumeScalar
         )
-
-        guard AudioObjectHasProperty(deviceID, &volumeAddress) else {
-            AppLogger.audio.warning("Default output device supports neither settable mute nor volume")
+        guard mute != nil || volume != nil else {
+            AppLogger.audio.warning("Default output device exposes no readable mute or volume state")
             return
         }
+        savedState = SavedState(
+            deviceID: deviceID,
+            mute: mute,
+            volume: volume
+        )
+    }
 
-        var isVolumeSettable = DarwinBoolean(false)
-        let settableStatus = AudioObjectIsPropertySettable(deviceID, &volumeAddress, &isVolumeSettable)
-        guard settableStatus == noErr else {
-            AppLogger.audio.warning("Unable to determine whether output volume is settable (status: \(settableStatus, privacy: .public))")
+    func muteForDictation() {
+        if savedState == nil {
+            prepareForDictation()
+        }
+        guard savedState != nil, let deviceID = defaultOutputDevice() else { return }
+
+        if writeUInt32(
+            1,
+            deviceID: deviceID,
+            selector: kAudioDevicePropertyMute
+        ) == true {
             return
         }
-        guard isVolumeSettable.boolValue else {
-            AppLogger.audio.warning("Default output device supports neither settable mute nor volume")
+        if writeFloat32(
+            0,
+            deviceID: deviceID,
+            selector: kAudioDevicePropertyVolumeScalar
+        ) == true {
             return
         }
-
-        muteVolume(deviceID: deviceID, address: &volumeAddress)
+        AppLogger.audio.warning("Default output device supports neither settable mute nor volume")
     }
 
     func restoreAfterDictation() {
-        guard let state = savedState else { return }
+        guard let savedState else { return }
+        let targets = Self.restorationTargets(
+            originalDeviceID: savedState.deviceID,
+            currentDeviceID: defaultOutputDevice()
+        )
+        self.savedState = nil
 
-        switch state.value {
-        case .mute(var originalValue):
-            var address = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyMute,
-                mScope: kAudioDevicePropertyScopeOutput,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            let status = AudioObjectSetPropertyData(
-                state.deviceID,
-                &address,
-                0,
-                nil,
-                UInt32(MemoryLayout<UInt32>.size),
-                &originalValue
-            )
-            if status != noErr {
-                AppLogger.audio.warning("Unable to restore output mute (status: \(status, privacy: .public))")
-            }
+        for deviceID in targets {
+            restore(savedState, to: deviceID)
+        }
+    }
 
-        case .volume(var originalValue):
-            var address = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyVolumeScalar,
-                mScope: kAudioDevicePropertyScopeOutput,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            let status = AudioObjectSetPropertyData(
-                state.deviceID,
-                &address,
-                0,
-                nil,
-                UInt32(MemoryLayout<Float32>.size),
-                &originalValue
-            )
-            if status != noErr {
-                AppLogger.audio.warning("Unable to restore output volume (status: \(status, privacy: .public))")
+    static func restorationTargets(
+        originalDeviceID: AudioObjectID,
+        currentDeviceID: AudioObjectID?
+    ) -> [AudioObjectID] {
+        guard let currentDeviceID,
+              currentDeviceID != originalDeviceID else {
+            return [originalDeviceID]
+        }
+        // Restore the current route last. Both receive the same canonical
+        // pre-dictation state, so shared Bluetooth controls cannot end muted.
+        return [originalDeviceID, currentDeviceID]
+    }
+
+    private func restore(
+        _ state: SavedState,
+        to deviceID: AudioObjectID
+    ) {
+        var wroteValue = false
+
+        // Restore volume before unmuting so playback cannot resume at an
+        // intermediate level.
+        if let volume = state.volume,
+           let succeeded = writeFloat32(
+               volume,
+               deviceID: deviceID,
+               selector: kAudioDevicePropertyVolumeScalar
+           ) {
+            wroteValue = true
+            if !succeeded {
+                AppLogger.audio.warning("Unable to restore output volume")
             }
         }
 
-        savedState = nil
+        if let mute = state.mute,
+           let succeeded = writeUInt32(
+               mute,
+               deviceID: deviceID,
+               selector: kAudioDevicePropertyMute
+           ) {
+            wroteValue = true
+            if !succeeded {
+                AppLogger.audio.warning("Unable to restore output mute")
+            }
+        }
+
+        if !wroteValue {
+            AppLogger.audio.warning("Unable to apply the saved output state to an audio route")
+        }
     }
 
     private func defaultOutputDevice() -> AudioObjectID? {
@@ -144,75 +157,108 @@ final class SystemAudioOutputController: SystemAudioOutputControlling {
         return deviceID
     }
 
-    private func mute(
+    private func readUInt32(
         deviceID: AudioObjectID,
-        address: inout AudioObjectPropertyAddress
-    ) {
-        var originalValue: UInt32 = 0
+        selector: AudioObjectPropertySelector
+    ) -> UInt32? {
+        var address = propertyAddress(selector: selector)
+        guard AudioObjectHasProperty(deviceID, &address) else { return nil }
+        var value: UInt32 = 0
         var dataSize = UInt32(MemoryLayout<UInt32>.size)
-        let readStatus = AudioObjectGetPropertyData(
+        guard AudioObjectGetPropertyData(
             deviceID,
             &address,
             0,
             nil,
             &dataSize,
-            &originalValue
-        )
-        guard readStatus == noErr else {
-            AppLogger.audio.warning("Unable to read output mute (status: \(readStatus, privacy: .public))")
-            return
+            &value
+        ) == noErr else {
+            return nil
         }
+        return value
+    }
 
-        var mutedValue: UInt32 = 1
-        let writeStatus = AudioObjectSetPropertyData(
+    private func readFloat32(
+        deviceID: AudioObjectID,
+        selector: AudioObjectPropertySelector
+    ) -> Float32? {
+        var address = propertyAddress(selector: selector)
+        guard AudioObjectHasProperty(deviceID, &address) else { return nil }
+        var value: Float32 = 0
+        var dataSize = UInt32(MemoryLayout<Float32>.size)
+        guard AudioObjectGetPropertyData(
+            deviceID,
+            &address,
+            0,
+            nil,
+            &dataSize,
+            &value
+        ) == noErr else {
+            return nil
+        }
+        return value
+    }
+
+    private func writeUInt32(
+        _ value: UInt32,
+        deviceID: AudioObjectID,
+        selector: AudioObjectPropertySelector
+    ) -> Bool? {
+        var address = propertyAddress(selector: selector)
+        guard isSettable(deviceID: deviceID, address: &address) else {
+            return nil
+        }
+        var mutableValue = value
+        return AudioObjectSetPropertyData(
             deviceID,
             &address,
             0,
             nil,
             UInt32(MemoryLayout<UInt32>.size),
-            &mutedValue
-        )
-        guard writeStatus == noErr else {
-            AppLogger.audio.warning("Unable to mute output (status: \(writeStatus, privacy: .public))")
-            return
-        }
-
-        savedState = SavedState(deviceID: deviceID, value: .mute(originalValue))
+            &mutableValue
+        ) == noErr
     }
 
-    private func muteVolume(
+    private func writeFloat32(
+        _ value: Float32,
         deviceID: AudioObjectID,
-        address: inout AudioObjectPropertyAddress
-    ) {
-        var originalValue: Float32 = 0
-        var dataSize = UInt32(MemoryLayout<Float32>.size)
-        let readStatus = AudioObjectGetPropertyData(
-            deviceID,
-            &address,
-            0,
-            nil,
-            &dataSize,
-            &originalValue
-        )
-        guard readStatus == noErr else {
-            AppLogger.audio.warning("Unable to read output volume (status: \(readStatus, privacy: .public))")
-            return
+        selector: AudioObjectPropertySelector
+    ) -> Bool? {
+        var address = propertyAddress(selector: selector)
+        guard isSettable(deviceID: deviceID, address: &address) else {
+            return nil
         }
-
-        var mutedValue: Float32 = 0
-        let writeStatus = AudioObjectSetPropertyData(
+        var mutableValue = value
+        return AudioObjectSetPropertyData(
             deviceID,
             &address,
             0,
             nil,
             UInt32(MemoryLayout<Float32>.size),
-            &mutedValue
-        )
-        guard writeStatus == noErr else {
-            AppLogger.audio.warning("Unable to set output volume to zero (status: \(writeStatus, privacy: .public))")
-            return
-        }
+            &mutableValue
+        ) == noErr
+    }
 
-        savedState = SavedState(deviceID: deviceID, value: .volume(originalValue))
+    private func isSettable(
+        deviceID: AudioObjectID,
+        address: inout AudioObjectPropertyAddress
+    ) -> Bool {
+        guard AudioObjectHasProperty(deviceID, &address) else { return false }
+        var isSettable = DarwinBoolean(false)
+        return AudioObjectIsPropertySettable(
+            deviceID,
+            &address,
+            &isSettable
+        ) == noErr && isSettable.boolValue
+    }
+
+    private func propertyAddress(
+        selector: AudioObjectPropertySelector
+    ) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
     }
 }

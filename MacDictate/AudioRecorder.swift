@@ -41,6 +41,10 @@ enum AudioInputSelection: Codable, Hashable, Sendable {
         case let .device(uid, _): uid
         }
     }
+
+    var requiresExplicitDeviceBinding: Bool {
+        if case .device = self { true } else { false }
+    }
 }
 
 enum AudioTapBlockFactory {
@@ -357,10 +361,10 @@ private enum CoreAudioInputDevices {
 
 @MainActor
 final class AudioRecorder: AudioRecording {
-    private let engine = AVAudioEngine()
     private let permissionManager: MicrophonePermissionProviding
     private var inputSelection: AudioInputSelection
     private var fallbackInputSelection: AudioInputSelection?
+    private var engine: AVAudioEngine?
     private var activeInputDeviceID: AudioDeviceID?
     private var writer: LockedAudioWriter?
     private var recordingURL: URL?
@@ -370,8 +374,16 @@ final class AudioRecorder: AudioRecording {
     var onInputDeviceFallback: ((AudioInputSelection) -> Void)?
 
     var currentInputDeviceName: String {
-        let deviceID = activeInputDeviceID ?? CoreAudioInputDevices.defaultDeviceID
-        return deviceID.flatMap(CoreAudioInputDevices.name(for:)) ?? "No input device"
+        if let activeInputDeviceID {
+            return CoreAudioInputDevices.name(for: activeInputDeviceID) ?? inputSelection.displayName
+        }
+        switch inputSelection {
+        case .systemDefault:
+            return CoreAudioInputDevices.defaultDeviceID
+                .flatMap(CoreAudioInputDevices.name(for:)) ?? "No input device"
+        case let .device(_, name):
+            return name
+        }
     }
 
     var availableInputDevices: [AudioInputDevice] {
@@ -390,20 +402,11 @@ final class AudioRecorder: AudioRecording {
         self.permissionManager = permissionManager
         self.inputSelection = inputSelection
         self.fallbackInputSelection = fallbackInputSelection
-        configurationObserver = NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange,
-            object: engine,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.recoverFromConfigurationChange()
-            }
-        }
     }
 
     func selectInputDevice(_ selection: AudioInputSelection) throws {
         guard writer == nil else { throw AudioRecorderError.alreadyRecording }
-        try applyInputSelection(selection)
+        _ = try resolveInputDeviceID(for: selection)
         if selection != inputSelection {
             fallbackInputSelection = inputSelection
             inputSelection = selection
@@ -411,21 +414,11 @@ final class AudioRecorder: AudioRecording {
     }
 
     /// AVAudioEngine stops itself when the input configuration changes, and the
-    /// notification often fires benignly right at startup (Bluetooth profile
-    /// switches, sample-rate renegotiation). Re-tap the input with its current
-    /// format and restart; only report an interruption if that fails.
+    /// notification often fires benignly as recording starts (Bluetooth
+    /// profile switches, sample-rate renegotiation). Re-tap the input with its
+    /// current format and restart; only report an interruption if that fails.
     private func recoverFromConfigurationChange() {
-        guard let audioWriter = writer else {
-            guard !isInputSelectionAvailable(inputSelection) else { return }
-            do {
-                try applyInputSelectionWithFallback()
-            } catch {
-                AppLogger.audio.error(
-                    "Could not recover an unavailable idle input: \(error.localizedDescription, privacy: .public)"
-                )
-            }
-            return
-        }
+        guard let engine, let audioWriter = writer else { return }
         let inputNode = engine.inputNode
         inputNode.removeTap(onBus: 0)
         do {
@@ -455,15 +448,29 @@ final class AudioRecorder: AudioRecording {
 
     func prepare() async throws {
         guard await permissionManager.request() else { throw AudioRecorderError.permissionDenied }
-        try applyInputSelectionWithFallback()
-        let format = engine.inputNode.inputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else {
-            throw AudioRecorderError.noInputDevice
+        try Task.checkCancellation()
+
+        releaseInputEngine()
+        let engine = AVAudioEngine()
+        self.engine = engine
+        observeConfigurationChanges(for: engine)
+        do {
+            try applyInputSelectionWithFallback()
+            let format = engine.inputNode.inputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                throw AudioRecorderError.noInputDevice
+            }
+        } catch {
+            releaseInputEngine()
+            throw error
         }
     }
 
     func start() throws {
         guard writer == nil else { throw AudioRecorderError.alreadyRecording }
+        guard let engine else {
+            throw AudioRecorderError.engineFailed("The microphone was not prepared.")
+        }
         let inputNode = engine.inputNode
         let inputFormat = inputNode.inputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
@@ -490,16 +497,20 @@ final class AudioRecorder: AudioRecording {
             writer = nil
             recordingURL = nil
             try? FileManager.default.removeItem(at: url)
+            releaseInputEngine()
             throw AudioRecorderError.engineFailed(error.localizedDescription)
         }
     }
 
     func stop() throws -> RecordedAudio {
-        guard let writer, let url = recordingURL else { throw AudioRecorderError.notRecording }
+        guard let engine, let writer, let url = recordingURL else {
+            throw AudioRecorderError.notRecording
+        }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         self.writer = nil
         recordingURL = nil
+        releaseInputEngine()
         do {
             let result = try writer.finish()
             return RecordedAudio(
@@ -515,13 +526,13 @@ final class AudioRecorder: AudioRecording {
     }
 
     func cancel() {
-        if writer != nil {
+        if writer != nil, let engine {
             engine.inputNode.removeTap(onBus: 0)
-            engine.stop()
         }
         writer = nil
         if let recordingURL { try? FileManager.default.removeItem(at: recordingURL) }
         recordingURL = nil
+        releaseInputEngine()
     }
 
     private func applyInputSelectionWithFallback() throws {
@@ -557,21 +568,20 @@ final class AudioRecorder: AudioRecording {
     }
 
     private func applyInputSelection(_ selection: AudioInputSelection) throws {
-        let deviceID: AudioDeviceID
-        switch selection {
-        case .systemDefault:
-            guard let defaultDeviceID = CoreAudioInputDevices.defaultDeviceID else {
-                throw AudioRecorderError.noInputDevice
-            }
-            deviceID = defaultDeviceID
-        case let .device(uid, name):
-            guard let selectedDeviceID = CoreAudioInputDevices.deviceID(forUID: uid),
-                  CoreAudioInputDevices.available.contains(where: { $0.uid == uid }) else {
-                throw AudioRecorderError.inputDeviceUnavailable(name)
-            }
-            deviceID = selectedDeviceID
+        let deviceID = try resolveInputDeviceID(for: selection)
+        activeInputDeviceID = deviceID
+
+        // AVAudioEngine follows macOS's default-device aggregate automatically.
+        // Forcing its audio unit back to the physical default device fights that
+        // aggregate during Bluetooth profile changes and repeatedly stops input.
+        guard selection.requiresExplicitDeviceBinding else {
+            AppLogger.audio.info("Using system default input: \(self.currentInputDeviceName, privacy: .public)")
+            return
         }
 
+        guard let engine else {
+            throw AudioRecorderError.engineFailed("The microphone was not prepared.")
+        }
         let inputNode = engine.inputNode
         guard let audioUnit = inputNode.audioUnit else {
             throw AudioRecorderError.engineFailed("The input audio unit is unavailable.")
@@ -594,16 +604,60 @@ final class AudioRecorder: AudioRecording {
                 status
             )
         }
-        activeInputDeviceID = deviceID
         AppLogger.audio.info("Selected input device: \(self.currentInputDeviceName, privacy: .public)")
     }
 
-    private func isInputSelectionAvailable(_ selection: AudioInputSelection) -> Bool {
+    private func resolveInputDeviceID(
+        for selection: AudioInputSelection
+    ) throws -> AudioDeviceID {
         switch selection {
         case .systemDefault:
-            CoreAudioInputDevices.defaultDeviceID != nil
-        case let .device(uid, _):
-            CoreAudioInputDevices.available.contains(where: { $0.uid == uid })
+            guard let defaultDeviceID = CoreAudioInputDevices.defaultDeviceID else {
+                throw AudioRecorderError.noInputDevice
+            }
+            return defaultDeviceID
+        case let .device(uid, name):
+            guard let selectedDeviceID = CoreAudioInputDevices.deviceID(forUID: uid),
+                  CoreAudioInputDevices.available.contains(where: { $0.uid == uid }) else {
+                throw AudioRecorderError.inputDeviceUnavailable(name)
+            }
+            return selectedDeviceID
+        }
+    }
+
+    private func observeConfigurationChanges(for engine: AVAudioEngine) {
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.recoverFromConfigurationChange()
+            }
+        }
+    }
+
+    private func releaseInputEngine() {
+        if let configurationObserver {
+            NotificationCenter.default.removeObserver(configurationObserver)
+            self.configurationObserver = nil
+        }
+        guard let engine else {
+            activeInputDeviceID = nil
+            return
+        }
+
+        engine.stop()
+        self.engine = nil
+        activeInputDeviceID = nil
+
+        // Bluetooth route changes can leave AVAudioIOUnit property callbacks
+        // executing briefly after stop() returns. Keep the stopped engine alive
+        // until those callbacks drain; deallocating it synchronously races the
+        // callback and can crash inside AVAudioEngine dealloc.
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            withExtendedLifetime(engine) {}
         }
     }
 }

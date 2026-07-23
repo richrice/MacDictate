@@ -110,7 +110,7 @@ MacDictate never synthesizes Return or Enter.
 
 ## Settings
 
-- **General:** launch at login, HUD, sounds, app-local microphone choice, automatic insertion, optional persistent transcript copy, and recording limit.
+- **General:** launch at login, HUD, sounds, app-local microphone choice, muting until delivery, automatic insertion, optional persistent transcript copy, and recording limit.
 - **Hotkey:** modifier/Space presets, default restoration, and live registration/conflict status.
 - **OpenAI:** save/replace/delete the Keychain credential, model, language, context prompt, and prompt reset.
 - **Permissions:** live Microphone and Accessibility states with links to the correct System Settings panes.

@@ -159,4 +159,14 @@ final class HotkeyPresetTests: XCTestCase {
         XCTAssertEqual(reloaded.audioInputSelection, selected)
         XCTAssertEqual(reloaded.fallbackAudioInputSelection, fallback)
     }
+
+    func testOnlyExplicitInputSelectionRequiresDeviceBinding() {
+        XCTAssertFalse(AudioInputSelection.systemDefault.requiresExplicitDeviceBinding)
+        XCTAssertTrue(
+            AudioInputSelection.device(
+                uid: "built-in-microphone",
+                name: "MacBook Pro Microphone"
+            ).requiresExplicitDeviceBinding
+        )
+    }
 }

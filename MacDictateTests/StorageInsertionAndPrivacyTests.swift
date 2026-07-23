@@ -338,6 +338,41 @@ final class StorageInsertionAndPrivacyTests: XCTestCase {
         XCTAssertNil(clipboard.text)
     }
 
+    func testITermPasteUsesFrontmostHIDEvents() {
+        XCTAssertTrue(
+            ClipboardPasteInserter.requiresFrontmostHIDEvents(
+                bundleIdentifier: "com.googlecode.iterm2"
+            )
+        )
+        XCTAssertTrue(
+            ClipboardPasteInserter.requiresFrontmostHIDEvents(
+                bundleIdentifier: "com.openai.codex"
+            )
+        )
+        XCTAssertFalse(
+            ClipboardPasteInserter.requiresFrontmostHIDEvents(
+                bundleIdentifier: "com.apple.Terminal"
+            )
+        )
+    }
+
+    func testCanonicalOutputStateRestoresCurrentRouteLast() {
+        XCTAssertEqual(
+            SystemAudioOutputController.restorationTargets(
+                originalDeviceID: 11,
+                currentDeviceID: 22
+            ),
+            [11, 22]
+        )
+        XCTAssertEqual(
+            SystemAudioOutputController.restorationTargets(
+                originalDeviceID: 11,
+                currentDeviceID: 11
+            ),
+            [11]
+        )
+    }
+
     func testUnicodeEventChunksPreserveCharactersAndRespectNormalLimit() {
         let text = "1234567890123456789é👩🏽‍💻tail"
         let chunks = UnicodeKeyboardTextInserter.chunks(text, maximumUTF16Length: 20)

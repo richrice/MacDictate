@@ -120,7 +120,7 @@ struct SettingsView: View {
                 }
                 Toggle("Show floating status HUD", isOn: $settings.showHUD)
                 Toggle("Play subtle feedback sounds", isOn: $settings.playSounds)
-                Toggle("Mute system audio while dictating", isOn: $settings.muteSystemAudioDuringDictation)
+                Toggle("Mute system audio until text is delivered", isOn: $settings.muteSystemAudioDuringDictation)
                 Toggle("Automatically insert transcription", isOn: $settings.automaticallyInsert)
                 Toggle("Leave transcription on clipboard", isOn: $settings.copyToClipboard)
             }
