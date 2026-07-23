@@ -61,6 +61,7 @@ struct SettingsView: View {
     @ObservedObject var accessibilityPermission: AccessibilityPermissionManager
     @ObservedObject var launchAtLogin: LaunchAtLoginManager
     @StateObject private var credentials: CredentialSettingsModel
+    @State private var inputDeviceError: String?
 
     let audioRecorder: AudioRecording
 
@@ -124,11 +125,29 @@ struct SettingsView: View {
                 Toggle("Leave transcription on clipboard", isOn: $settings.copyToClipboard)
             }
             Section("Recording") {
-                LabeledContent("Input device", value: audioRecorder.currentInputDeviceName)
-                if audioRecorder.availableInputDeviceNames.count > 1 {
-                    Text("MacDictate follows the input device selected in macOS Sound settings. Available: \(audioRecorder.availableInputDeviceNames.joined(separator: ", ")).")
+                Picker("Input device", selection: Binding(
+                    get: { settings.audioInputSelection },
+                    set: { selectInputDevice($0) }
+                )) {
+                    Text("System Default").tag(AudioInputSelection.systemDefault)
+                    ForEach(audioRecorder.availableInputDevices) { device in
+                        Text(device.name).tag(device.selection)
+                    }
+                    if case let .device(uid, name) = settings.audioInputSelection,
+                       !audioRecorder.availableInputDevices.contains(where: { $0.uid == uid }) {
+                        Text("\(name) (Unavailable)")
+                            .tag(settings.audioInputSelection)
+                    }
+                }
+                .disabled(stateMachine.state.isActive)
+                LabeledContent("Active microphone", value: audioRecorder.currentInputDeviceName)
+                Text("The selection applies only to MacDictate and is remembered between launches.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let inputDeviceError {
+                    Text(inputDeviceError)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.red)
                 }
                 HStack {
                     Text("Maximum duration")
@@ -140,6 +159,20 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func selectInputDevice(_ selection: AudioInputSelection) {
+        do {
+            let previousSelection = settings.audioInputSelection
+            try audioRecorder.selectInputDevice(selection)
+            if selection != previousSelection {
+                settings.fallbackAudioInputSelection = previousSelection
+            }
+            settings.audioInputSelection = selection
+            inputDeviceError = nil
+        } catch {
+            inputDeviceError = error.localizedDescription
+        }
     }
 
     private var hotkeyTab: some View {

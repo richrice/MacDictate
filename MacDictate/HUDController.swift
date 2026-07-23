@@ -7,28 +7,33 @@ private final class NonActivatingPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+@MainActor
 private struct HUDView: View {
     let phase: DictationPhase
+    let audioRecorder: AudioRecording
 
     var body: some View {
-        HStack(spacing: 10) {
-            Group {
-                switch phase {
-                case .recording:
-                    Image(systemName: "mic.fill").foregroundStyle(.red)
-                case .preparing, .transcribing, .inserting:
-                    ProgressView().controlSize(.small)
-                case .completed:
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                case .failed:
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                case .cancelled:
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                case .idle:
-                    Image(systemName: "waveform")
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 10) {
+                Group {
+                    switch phase {
+                    case .recording:
+                        Image(systemName: "mic.fill").foregroundStyle(.red)
+                    case .preparing, .transcribing, .inserting:
+                        ProgressView().controlSize(.small)
+                    case .completed:
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    case .failed:
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    case .cancelled:
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    case .idle:
+                        Image(systemName: "waveform")
+                    }
                 }
+                statusContent
             }
-            statusContent
+            inputDetails
         }
         .font(.system(size: 14, weight: .medium))
         .padding(.horizontal, 16)
@@ -50,6 +55,35 @@ private struct HUDView: View {
             Text(phase.statusText).lineLimit(2)
         }
     }
+
+    @ViewBuilder
+    private var inputDetails: some View {
+        switch phase {
+        case .preparing:
+            Text("Mic: \(audioRecorder.currentInputDeviceName)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        case .recording:
+            TimelineView(.periodic(from: .now, by: 0.1)) { _ in
+                HStack(spacing: 8) {
+                    Text("Mic: \(audioRecorder.currentInputDeviceName)")
+                        .lineLimit(1)
+                    let level = audioRecorder.inputLevel
+                    ProgressView(value: Double(level))
+                        .progressViewStyle(.linear)
+                        .tint(level > 0.05 ? .green : .secondary)
+                        .frame(width: 90)
+                        .accessibilityLabel("Microphone input level")
+                        .accessibilityValue("\(Int(level * 100)) percent")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        default:
+            EmptyView()
+        }
+    }
 }
 
 @MainActor
@@ -57,12 +91,18 @@ final class HUDController {
     private let panel: NSPanel
     private let stateMachine: DictationStateMachine
     private let settings: SettingsStore
+    private let audioRecorder: AudioRecording
     private var cancellable: AnyCancellable?
     private var hideTask: Task<Void, Never>?
 
-    init(stateMachine: DictationStateMachine, settings: SettingsStore) {
+    init(
+        stateMachine: DictationStateMachine,
+        settings: SettingsStore,
+        audioRecorder: AudioRecording
+    ) {
         self.stateMachine = stateMachine
         self.settings = settings
+        self.audioRecorder = audioRecorder
         let panel = NonActivatingPanel(
             contentRect: NSRect(x: 0, y: 0, width: 300, height: 64),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -90,7 +130,9 @@ final class HUDController {
             panel.orderOut(nil)
             return
         }
-        panel.contentViewController = NSHostingController(rootView: HUDView(phase: phase))
+        panel.contentViewController = NSHostingController(
+            rootView: HUDView(phase: phase, audioRecorder: audioRecorder)
+        )
         panel.contentViewController?.view.layoutSubtreeIfNeeded()
         let fitting = panel.contentViewController?.view.fittingSize ?? NSSize(width: 300, height: 64)
         panel.setContentSize(NSSize(width: min(max(fitting.width, 190), 520), height: max(fitting.height, 52)))
@@ -123,4 +165,3 @@ final class HUDController {
         panel.setFrameOrigin(origin)
     }
 }
-

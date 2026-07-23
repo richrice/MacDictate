@@ -65,11 +65,18 @@ final class AudioTapIsolationTests: XCTestCase {
         // 44.1 kHz stereo. It must rebuild its converter and keep recording.
         let writer = try LockedAudioWriter(url: url, inputFormat: initialFormat)
         writer.append(buffer)
+        XCTAssertEqual(writer.livePeakAmplitude, 0.25, accuracy: 0.01)
         let result = try writer.finish()
 
         XCTAssertGreaterThan(result.frames, 0)
         XCTAssertEqual(result.peak, 0.25, accuracy: 0.01)
         XCTAssertGreaterThan(result.rms, 0.1)
     }
-}
 
+    func testAudioLevelScaleMapsSilenceAndSpeechIntoMeterRange() {
+        XCTAssertEqual(AudioLevelScale.normalized(peakAmplitude: 0), 0)
+        XCTAssertEqual(AudioLevelScale.normalized(peakAmplitude: 0.001), 0, accuracy: 0.001)
+        XCTAssertEqual(AudioLevelScale.normalized(peakAmplitude: 0.1), 2.0 / 3.0, accuracy: 0.01)
+        XCTAssertEqual(AudioLevelScale.normalized(peakAmplitude: 1), 1, accuracy: 0.001)
+    }
+}

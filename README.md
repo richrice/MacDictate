@@ -87,7 +87,7 @@ The default model is `gpt-4o-transcribe`. `gpt-4o-mini-transcribe` is available 
 The explicit workflow states are `idle`, `preparing`, `recording`, `transcribing`, `inserting`, `completed`, `cancelled`, and `failed`. A second recording cannot start while transcription or insertion is active, but pressing the shortcut during the brief completion or error display starts a new dictation immediately. Errors stay on screen for three seconds; other terminal states clear after about a second. The menu can also start a recording; **Stop and Transcribe** finishes a menu-started recording deliberately.
 
 - A Carbon global hotkey provides both key-down and key-up events and consumes the shortcut before the foreground app receives it. Auto-repeat is ignored. Settings provides several modifier/Space alternatives and reports registration conflicts.
-- AVAudioEngine captures the system-selected input device. AVAudioConverter writes mono 16 kHz, 16-bit linear PCM in a temporary WAV file. A five-minute ceiling keeps the largest default upload near 9.6 MB before WAV overhead.
+- AVAudioEngine captures the input chosen in MacDictate, using its persistent Core Audio device ID without changing the system-wide input. The previous MacDictate input is remembered and used if the active microphone disconnects. AVAudioConverter writes mono 16 kHz, 16-bit linear PCM in a temporary WAV file. A five-minute ceiling keeps the largest default upload near 9.6 MB before WAV overhead.
 - URLSession posts binary-safe multipart form data to `https://api.openai.com/v1/audio/transcriptions`. HTTP 429 and transient 5xx responses receive at most one delayed retry, honoring a numeric `Retry-After` header up to five seconds; authentication and other permanent 4xx failures are not retried.
 - The app first tries the Accessibility selected-text attribute, then verifies that the exact expected value remains present rather than trusting the setter's return code. If that control rejects direct insertion, MacDictate sends Unicode keyboard events directly to the captured application and applies the same verification.
 - The Codex desktop composer uses a focused global Command-V event because its controlled browser editor can accept an Accessibility write without reflecting it in the visible composer, while a physical Command-V works. Other targets use paste only after earlier attempts are observably absent.
@@ -105,11 +105,11 @@ MacDictate never synthesizes Return or Enter.
 - **SwiftUI TextEditor and standard AppKit text controls:** direct Accessibility insertion normally works.
 - **Password/secure fields:** macOS may intentionally refuse insertion.
 - **Remote desktop, keyboard-remapping, and clipboard-manager tools:** these can reserve the hotkey or change the clipboard before restoration. Select another shortcut or let the newer clipboard remain.
-- **Microphone choice:** AVAudioEngine follows the input selected in **System Settings → Sound → Input**. Settings lists the current and detected inputs without changing the system-wide default.
+- **Microphone choice:** Choose **System Default** or a specific microphone from MacDictate's menu or General settings. The choice applies only to MacDictate. The recording HUD shows the active microphone and a live input-level meter.
 
 ## Settings
 
-- **General:** launch at login, HUD, sounds, automatic insertion, optional persistent transcript copy, and recording limit.
+- **General:** launch at login, HUD, sounds, app-local microphone choice, automatic insertion, optional persistent transcript copy, and recording limit.
 - **Hotkey:** modifier/Space presets, default restoration, and live registration/conflict status.
 - **OpenAI:** save/replace/delete the Keychain credential, model, language, context prompt, and prompt reset.
 - **Permissions:** live Microphone and Accessibility states with links to the correct System Settings panes.

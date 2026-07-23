@@ -34,7 +34,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let microphonePermission = MicrophonePermissionManager()
         let accessibilityPermission = AccessibilityPermissionManager()
         let launchAtLogin = LaunchAtLoginManager()
-        let audioRecorder = AudioRecorder(permissionManager: microphonePermission)
+        let audioRecorder = AudioRecorder(
+            permissionManager: microphonePermission,
+            inputSelection: settings.audioInputSelection,
+            fallbackInputSelection: settings.fallbackAudioInputSelection
+        )
         let credentialStore = KeychainCredentialStore()
         let clipboard = ClipboardManager()
         let audioOutputController = SystemAudioOutputController()

@@ -82,6 +82,8 @@ final class SettingsStore: ObservableObject {
         static let automaticallyInsert = "automaticallyInsert"
         static let copyToClipboard = "copyToClipboard"
         static let maximumRecordingDuration = "maximumRecordingDuration"
+        static let audioInputSelection = "audioInputSelection"
+        static let fallbackAudioInputSelection = "fallbackAudioInputSelection"
         static let model = "transcriptionModel"
         static let language = "transcriptionLanguage"
         static let prompt = "transcriptionPrompt"
@@ -97,6 +99,8 @@ final class SettingsStore: ObservableObject {
     @Published var automaticallyInsert: Bool { didSet { defaults.set(automaticallyInsert, forKey: Key.automaticallyInsert) } }
     @Published var copyToClipboard: Bool { didSet { defaults.set(copyToClipboard, forKey: Key.copyToClipboard) } }
     @Published var maximumRecordingDuration: Double { didSet { defaults.set(maximumRecordingDuration, forKey: Key.maximumRecordingDuration) } }
+    @Published var audioInputSelection: AudioInputSelection { didSet { persistAudioInputSelection() } }
+    @Published var fallbackAudioInputSelection: AudioInputSelection? { didSet { persistFallbackAudioInputSelection() } }
     @Published var model: TranscriptionModel { didSet { defaults.set(model.rawValue, forKey: Key.model) } }
     @Published var language: TranscriptionLanguage { didSet { defaults.set(language.rawValue, forKey: Key.language) } }
     @Published var transcriptionPrompt: String { didSet { defaults.set(transcriptionPrompt, forKey: Key.prompt) } }
@@ -124,6 +128,20 @@ final class SettingsStore: ObservableObject {
         automaticallyInsert = defaults.bool(forKey: Key.automaticallyInsert)
         copyToClipboard = defaults.bool(forKey: Key.copyToClipboard)
         maximumRecordingDuration = min(max(defaults.double(forKey: Key.maximumRecordingDuration), 10), 300)
+        if let data = defaults.data(forKey: Key.audioInputSelection),
+           let decoded = try? JSONDecoder().decode(AudioInputSelection.self, from: data) {
+            audioInputSelection = decoded
+        } else {
+            audioInputSelection = .systemDefault
+        }
+        if let data = defaults.data(forKey: Key.fallbackAudioInputSelection) {
+            fallbackAudioInputSelection = try? JSONDecoder().decode(
+                AudioInputSelection.self,
+                from: data
+            )
+        } else {
+            fallbackAudioInputSelection = nil
+        }
         model = TranscriptionModel(rawValue: defaults.string(forKey: Key.model) ?? "") ?? .full
         language = TranscriptionLanguage(rawValue: defaults.string(forKey: Key.language) ?? "") ?? .english
         transcriptionPrompt = defaults.string(forKey: Key.prompt) ?? Self.defaultPrompt
@@ -148,5 +166,19 @@ final class SettingsStore: ObservableObject {
     private func persistHotkey() {
         guard let data = try? JSONEncoder().encode(hotkey) else { return }
         defaults.set(data, forKey: Key.hotkey)
+    }
+
+    private func persistAudioInputSelection() {
+        guard let data = try? JSONEncoder().encode(audioInputSelection) else { return }
+        defaults.set(data, forKey: Key.audioInputSelection)
+    }
+
+    private func persistFallbackAudioInputSelection() {
+        guard let fallbackAudioInputSelection else {
+            defaults.removeObject(forKey: Key.fallbackAudioInputSelection)
+            return
+        }
+        guard let data = try? JSONEncoder().encode(fallbackAudioInputSelection) else { return }
+        defaults.set(data, forKey: Key.fallbackAudioInputSelection)
     }
 }

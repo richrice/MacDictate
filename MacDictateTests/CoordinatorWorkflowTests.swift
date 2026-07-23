@@ -5,13 +5,20 @@ import XCTest
 @MainActor
 private final class MockAudioRecorder: AudioRecording {
     var currentInputDeviceName = "Mock Microphone"
-    var availableInputDeviceNames: [String] = []
+    var availableInputDevices: [AudioInputDevice] = []
+    var inputLevel: Float = 0
     var onInterruption: ((String) -> Void)?
+    var onInputDeviceFallback: ((AudioInputSelection) -> Void)?
+    private(set) var selectedInputDevice: AudioInputSelection = .systemDefault
 
     var peakAmplitude: Float = 0.5
     var rmsAmplitude: Float = 0.1
     var duration: TimeInterval = 1.0
     private(set) var cancelCount = 0
+
+    func selectInputDevice(_ selection: AudioInputSelection) throws {
+        selectedInputDevice = selection
+    }
 
     func prepare() async throws {}
     func start() throws {}

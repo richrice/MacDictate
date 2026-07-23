@@ -34,6 +34,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: MacDictate/MacDictate.entitlements
     dependencies:
       - sdk: AVFoundation.framework
+      - sdk: AudioToolbox.framework
       - sdk: Carbon.framework
       - sdk: CoreAudio.framework
       - sdk: Security.framework
@@ -60,4 +61,3 @@ schemes:
     test:
       targets:
         - MacDictateTests
-

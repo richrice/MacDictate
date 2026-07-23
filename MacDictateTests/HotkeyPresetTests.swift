@@ -138,4 +138,25 @@ final class HotkeyPresetTests: XCTestCase {
         XCTAssertEqual(settings.hotkey, HotkeyShortcut.defaultShortcut)
         XCTAssertTrue(HotkeyShortcut.presets.contains(settings.hotkey))
     }
+
+    @MainActor
+    func testAudioInputSelectionAndFallbackPersist() throws {
+        let suiteName = "AudioInputSelectionTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let selected = AudioInputSelection.device(uid: "iphone-uid", name: "Backup iPhone")
+        let fallback = AudioInputSelection.device(uid: "mac-uid", name: "MacBook Microphone")
+        var settings: SettingsStore? = SettingsStore(defaults: defaults)
+        settings?.audioInputSelection = selected
+        settings?.fallbackAudioInputSelection = fallback
+        settings = nil
+
+        let reloaded = SettingsStore(defaults: defaults)
+        XCTAssertEqual(reloaded.audioInputSelection, selected)
+        XCTAssertEqual(reloaded.fallbackAudioInputSelection, fallback)
+    }
 }

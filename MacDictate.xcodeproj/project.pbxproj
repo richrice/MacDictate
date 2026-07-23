@@ -27,6 +27,7 @@
 		A30444BFEED81AA42D43566B /* Diagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE21880EACD3E2D7D0F79ED1 /* Diagnostics.swift */; };
 		B01BE6AB93DFDCFD059F6E9B /* HUDController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DA91FFCA893DFC510713B81 /* HUDController.swift */; };
 		B35DB4AB1DA5B299EED3A860 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8DEF1F0CD2C050337AD86393 /* AVFoundation.framework */; };
+		B5588633C4FD297F17B9F6B4 /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 11732ED3FADCCF3EFCA53AB3 /* AudioToolbox.framework */; };
 		B5E4F870B7A448609BA950BC /* StateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 858782A062F50E08FA10011D /* StateMachineTests.swift */; };
 		C4796C5B028FD0D316DDAE39 /* GlobalHotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74DD84626FEBAF7EF02266E7 /* GlobalHotkeyManager.swift */; };
 		D225FC388642DD50B5ED277E /* TranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D49EEF1F33C3EBE0CCFAAF69 /* TranscriptionService.swift */; };
@@ -52,6 +53,7 @@
 		05F875BAC4152B52F435994D /* PermissionManagers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionManagers.swift; sourceTree = "<group>"; };
 		0A29F3A54D22BEFEEDB1469E /* MultipartAndTranscriptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultipartAndTranscriptionTests.swift; sourceTree = "<group>"; };
 		0B5A8BB43E85D857A1B0DF74 /* CoordinatorWorkflowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinatorWorkflowTests.swift; sourceTree = "<group>"; };
+		11732ED3FADCCF3EFCA53AB3 /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
 		14BD9602CD63C5CA7FDD870C /* CoreAudio.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreAudio.framework; path = System/Library/Frameworks/CoreAudio.framework; sourceTree = SDKROOT; };
 		163134A363DB1F77398F7CF3 /* SystemAudioOutputController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemAudioOutputController.swift; sourceTree = "<group>"; };
 		19A05D8A2E0CCFAEC92A7B28 /* ServiceManagement.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ServiceManagement.framework; path = System/Library/Frameworks/ServiceManagement.framework; sourceTree = SDKROOT; };
@@ -89,6 +91,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B35DB4AB1DA5B299EED3A860 /* AVFoundation.framework in Frameworks */,
+				B5588633C4FD297F17B9F6B4 /* AudioToolbox.framework in Frameworks */,
 				390778B7B81457CA4E4D846B /* Carbon.framework in Frameworks */,
 				3516EF06E66193C91697FDAE /* CoreAudio.framework in Frameworks */,
 				0A8D99E17013C4A3FED3EDE8 /* Security.framework in Frameworks */,
@@ -147,6 +150,7 @@
 		C604EFC1523F0797C54ACEBA /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				11732ED3FADCCF3EFCA53AB3 /* AudioToolbox.framework */,
 				8DEF1F0CD2C050337AD86393 /* AVFoundation.framework */,
 				5B4CC1BB9284C5D9EBA68554 /* Carbon.framework */,
 				14BD9602CD63C5CA7FDD870C /* CoreAudio.framework */,

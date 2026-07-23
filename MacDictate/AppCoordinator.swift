@@ -25,7 +25,7 @@ enum RecordingPolicy {
 }
 
 @MainActor
-final class AppCoordinator: NSObject {
+final class AppCoordinator: NSObject, NSMenuDelegate {
     let settings: SettingsStore
     let stateMachine: DictationStateMachine
     let hotkeyManager: GlobalHotkeyManager
@@ -46,6 +46,9 @@ final class AppCoordinator: NSObject {
     private var stopMenuItem: NSMenuItem?
     private var cancelMenuItem: NSMenuItem?
     private var copyErrorMenuItem: NSMenuItem?
+    private var microphoneMenuItem: NSMenuItem?
+    private var microphoneMenu: NSMenu?
+    private var microphoneMenuSelections: [Int: AudioInputSelection] = [:]
     private var settingsWindowController: SettingsWindowController?
     private var hudController: HUDController?
     private var stateCancellable: AnyCancellable?
@@ -94,12 +97,31 @@ final class AppCoordinator: NSObject {
         NSApp.setActivationPolicy(.accessory)
         configureMenuBar()
         configureSettingsWindow()
-        hudController = HUDController(stateMachine: stateMachine, settings: settings)
+        hudController = HUDController(
+            stateMachine: stateMachine,
+            settings: settings,
+            audioRecorder: audioRecorder
+        )
+
+        do {
+            try audioRecorder.selectInputDevice(settings.audioInputSelection)
+        } catch {
+            AppLogger.audio.error(
+                "Saved input device is currently unavailable: \(error.localizedDescription, privacy: .public)"
+            )
+        }
 
         hotkeyManager.onKeyDown = { [weak self] in self?.beginDictation() }
         hotkeyManager.onKeyUp = { [weak self] in self?.finishDictation() }
         audioRecorder.onInterruption = { [weak self] reason in
             self?.fail(AudioRecorderError.engineFailed(reason))
+        }
+        audioRecorder.onInputDeviceFallback = { [weak self] selection in
+            guard let self else { return }
+            let previousSelection = self.settings.audioInputSelection
+            self.settings.fallbackAudioInputSelection = previousSelection
+            self.settings.audioInputSelection = selection
+            self.refreshMicrophoneMenu()
         }
         hotkeyManager.register(settings.hotkey)
 
@@ -440,6 +462,7 @@ final class AppCoordinator: NSObject {
         statusItem.button?.toolTip = "MacDictate — Ready"
         let menu = NSMenu()
         menu.autoenablesItems = false
+        menu.delegate = self
 
         let status = NSMenuItem(title: "Ready", action: nil, keyEquivalent: "")
         status.isEnabled = false
@@ -463,6 +486,12 @@ final class AppCoordinator: NSObject {
         menu.addItem(copyError)
         menu.addItem(.separator())
 
+        let microphonePickerItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
+        let microphoneMenu = NSMenu(title: "Microphone")
+        microphonePickerItem.submenu = microphoneMenu
+        menu.addItem(microphonePickerItem)
+        menu.addItem(.separator())
+
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
@@ -484,6 +513,9 @@ final class AppCoordinator: NSObject {
         stopMenuItem = stop
         cancelMenuItem = cancel
         copyErrorMenuItem = copyError
+        self.microphoneMenuItem = microphonePickerItem
+        self.microphoneMenu = microphoneMenu
+        refreshMicrophoneMenu()
     }
 
     private func configureSettingsWindow() {
@@ -510,6 +542,7 @@ final class AppCoordinator: NSObject {
         }
         cancelMenuItem?.isEnabled = state.isActive
         copyErrorMenuItem?.isHidden = lastErrorDetails == nil
+        microphoneMenuItem?.isEnabled = state == .idle
 
         let symbol: String
         switch state {
@@ -522,6 +555,72 @@ final class AppCoordinator: NSObject {
         statusItem?.button?.toolTip = "MacDictate — \(state.statusText)"
     }
 
+    func menuWillOpen(_ menu: NSMenu) {
+        refreshMicrophoneMenu()
+    }
+
+    private func refreshMicrophoneMenu() {
+        guard let microphoneMenu else { return }
+        microphoneMenu.removeAllItems()
+        microphoneMenuSelections.removeAll()
+        microphoneMenuItem?.title = "Microphone: \(audioRecorder.currentInputDeviceName)"
+
+        var nextTag = 0
+        let systemDefaultItem = NSMenuItem(
+            title: "System Default",
+            action: #selector(selectMicrophone(_:)),
+            keyEquivalent: ""
+        )
+        systemDefaultItem.target = self
+        systemDefaultItem.tag = nextTag
+        systemDefaultItem.state = settings.audioInputSelection == .systemDefault ? .on : .off
+        systemDefaultItem.isEnabled = stateMachine.state == .idle
+        microphoneMenuSelections[nextTag] = .systemDefault
+        microphoneMenu.addItem(systemDefaultItem)
+        nextTag += 1
+
+        let devices = audioRecorder.availableInputDevices
+        if !devices.isEmpty {
+            microphoneMenu.addItem(.separator())
+        }
+        for device in devices {
+            let selection = device.selection
+            let item = NSMenuItem(
+                title: device.name,
+                action: #selector(selectMicrophone(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.tag = nextTag
+            item.state = settings.audioInputSelection.uid == device.uid ? .on : .off
+            item.isEnabled = stateMachine.state == .idle
+            microphoneMenuSelections[nextTag] = selection
+            microphoneMenu.addItem(item)
+            nextTag += 1
+        }
+
+        if case let .device(uid, name) = settings.audioInputSelection,
+           !devices.contains(where: { $0.uid == uid }) {
+            microphoneMenu.addItem(.separator())
+            let unavailable = NSMenuItem(
+                title: "\(name) (Unavailable)",
+                action: nil,
+                keyEquivalent: ""
+            )
+            unavailable.state = .on
+            unavailable.isEnabled = false
+            microphoneMenu.addItem(unavailable)
+        } else if devices.isEmpty {
+            let unavailable = NSMenuItem(
+                title: "No microphones available",
+                action: nil,
+                keyEquivalent: ""
+            )
+            unavailable.isEnabled = false
+            microphoneMenu.addItem(unavailable)
+        }
+    }
+
     @objc private func startFromMenu() { beginDictation() }
 
     @objc private func stopFromMenu() {
@@ -532,6 +631,25 @@ final class AppCoordinator: NSObject {
     }
 
     @objc private func cancelFromMenu() { cancelActive() }
+
+    @objc private func selectMicrophone(_ sender: NSMenuItem) {
+        guard stateMachine.state == .idle,
+              let selection = microphoneMenuSelections[sender.tag] else {
+            return
+        }
+        do {
+            let previousSelection = settings.audioInputSelection
+            try audioRecorder.selectInputDevice(selection)
+            if selection != previousSelection {
+                settings.fallbackAudioInputSelection = previousSelection
+            }
+            settings.audioInputSelection = selection
+            refreshMicrophoneMenu()
+        } catch {
+            fail(error)
+        }
+    }
+
     @objc private func openSettings() { settingsWindowController?.show() }
     @objc private func openAccessibilitySettings() { accessibilityPermission.openSettings() }
     @objc private func openMicrophoneSettings() { microphonePermission.openSettings() }

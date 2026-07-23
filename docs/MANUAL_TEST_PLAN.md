@@ -56,7 +56,7 @@ Expected: one generic-password item exists; no key appears in `defaults read com
 
 1. Open Settings > Hotkey and verify the picker groups presets under **Space**, **Function keys**, and **Other keys**. Select F13, verify pressing and releasing it starts and stops dictation, then restore the default shortcut.
 2. Focus an empty TextEdit document or SwiftUI TextEditor.
-3. Press and hold Option-Space. Verify the target stays focused, the menu icon changes to a microphone, and the non-activating HUD shows a red mic and increasing elapsed time.
+3. Press and hold Option-Space. Verify the target stays focused, the menu icon changes to a microphone, and the non-activating HUD shows a red mic, the active microphone name, a responsive input-level meter, and increasing elapsed time.
 4. Continue holding for two seconds; verify key repeat does not restart the timer or create another HUD.
 5. Speak a short instruction and release Space while Option remains down.
 6. Verify recording stops immediately and the HUD changes to **Transcribing…**.
@@ -181,10 +181,12 @@ Expected: no overlap, crash, duplicate transcript, retained temporary file, or r
 1. Set Maximum duration to 10 seconds.
 2. Hold the shortcut longer than 10 seconds and verify recording automatically stops and transcribes once.
 3. Hold for one second in silence and verify a quiet "No speech detected" cancellation (no error sound, no Copy Last Error Details entry) with no API request where the audio threshold is met.
-4. Start with a removable USB/Bluetooth microphone selected in macOS Sound settings.
-5. Begin recording, disconnect or power off the microphone, and verify either seamless recovery onto the fallback input or an interruption/device error—never a hallucinated transcript.
-6. Select a working input in System Settings and complete another recording.
-7. With Bluetooth headphones connected, verify the first dictation after launch succeeds: benign input configuration changes at engine start (for example a hands-free profile switch) must recover silently rather than showing "The microphone could not start."
+4. In MacDictate, select a built-in microphone, then select a removable USB, Bluetooth, or Continuity Camera microphone. Verify macOS **System Settings → Sound → Input** does not change.
+5. Quit and relaunch MacDictate. Verify the removable microphone remains selected and the built-in microphone is retained as the previous input.
+6. Begin recording, disconnect or power off the selected microphone, and verify recording switches to the previous input. Confirm the HUD changes to its name and its level meter responds.
+7. Quit and relaunch again. Verify the fallback input is now the selected input and complete another recording.
+8. Repeat the disconnect with both the selected and previous inputs unavailable. Verify an interruption/device error appears—never a silent switch to an arbitrary device or a hallucinated transcript.
+9. With Bluetooth headphones connected, verify the first dictation after launch succeeds: benign input configuration changes at engine start (for example a hands-free profile switch) must recover silently rather than showing "The microphone could not start."
 
 Expected: taps and engine resources are released and the app recovers without relaunch.
 
