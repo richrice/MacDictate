@@ -1,38 +1,66 @@
 import CoreAudio
+import Foundation
 
 @MainActor
 protocol SystemAudioOutputControlling: AnyObject {
     /// Captures the user's output state before opening the microphone can change
-    /// the Bluetooth profile.
-    func prepareForDictation()
+    /// the Bluetooth profile. A baseline already owned by a rapid sequence of
+    /// dictations is preserved instead of being recaptured.
+    func prepareForDictation(workflowID: UUID)
     /// Mutes the current default output. Repeated calls cover profile changes.
-    func muteForDictation()
-    /// Applies the pre-dictation state to the original and current output routes.
-    func restoreAfterDictation()
+    func muteForDictation(workflowID: UUID)
+    /// Starts verified restoration for the workflow that currently owns mute.
+    func restoreAfterDictation(workflowID: UUID)
+}
+
+@MainActor
+protocol AudioOutputDeviceAccess: AnyObject {
+    func defaultOutputDevice() -> AudioObjectID?
+    func readMute(deviceID: AudioObjectID) -> UInt32?
+    func readVolume(deviceID: AudioObjectID) -> Float32?
+    func writeMute(_ value: UInt32, deviceID: AudioObjectID) -> Bool?
+    func writeVolume(_ value: Float32, deviceID: AudioObjectID) -> Bool?
 }
 
 @MainActor
 final class SystemAudioOutputController: SystemAudioOutputControlling {
-    private struct SavedState {
+    private struct SavedState: Equatable {
         let deviceID: AudioObjectID
         let mute: UInt32?
         let volume: Float32?
     }
 
+    private let deviceAccess: AudioOutputDeviceAccess
+    private let restorationRetryDelay: Duration
+    private let restorationQuietDelay: Duration
+
     private var savedState: SavedState?
+    private var activeWorkflowID: UUID?
+    private var restorationTask: Task<Void, Never>?
 
-    func prepareForDictation() {
+    init(
+        deviceAccess: AudioOutputDeviceAccess = CoreAudioOutputDeviceAccess(),
+        restorationRetryDelay: Duration = .milliseconds(100),
+        restorationQuietDelay: Duration = .seconds(2)
+    ) {
+        self.deviceAccess = deviceAccess
+        self.restorationRetryDelay = restorationRetryDelay
+        self.restorationQuietDelay = restorationQuietDelay
+    }
+
+    func prepareForDictation(workflowID: UUID) {
+        restorationTask?.cancel()
+        restorationTask = nil
+        activeWorkflowID = workflowID
+
+        // Keep the first trusted baseline until it has been restored and has
+        // remained stable through the quiet period. A rapid follow-up press may
+        // otherwise observe our own transient mute as the user's desired state.
         guard savedState == nil else { return }
-        guard let deviceID = defaultOutputDevice() else { return }
+        guard let deviceID = deviceAccess.defaultOutputDevice() else { return }
 
-        let mute = readUInt32(
-            deviceID: deviceID,
-            selector: kAudioDevicePropertyMute
-        )
-        let volume = readFloat32(
-            deviceID: deviceID,
-            selector: kAudioDevicePropertyVolumeScalar
-        )
+        let mute = deviceAccess.readMute(deviceID: deviceID)
+        let volume = deviceAccess.readVolume(deviceID: deviceID)
         guard mute != nil || volume != nil else {
             AppLogger.audio.warning("Default output device exposes no readable mute or volume state")
             return
@@ -44,39 +72,133 @@ final class SystemAudioOutputController: SystemAudioOutputControlling {
         )
     }
 
-    func muteForDictation() {
+    func muteForDictation(workflowID: UUID) {
+        guard activeWorkflowID == workflowID else { return }
         if savedState == nil {
-            prepareForDictation()
+            prepareForDictation(workflowID: workflowID)
         }
-        guard savedState != nil, let deviceID = defaultOutputDevice() else { return }
-
-        if writeUInt32(
-            1,
-            deviceID: deviceID,
-            selector: kAudioDevicePropertyMute
-        ) == true {
+        guard savedState != nil,
+              let deviceID = deviceAccess.defaultOutputDevice() else {
             return
         }
-        if writeFloat32(
-            0,
-            deviceID: deviceID,
-            selector: kAudioDevicePropertyVolumeScalar
-        ) == true {
+
+        if deviceAccess.writeMute(1, deviceID: deviceID) == true {
+            return
+        }
+        if deviceAccess.writeVolume(0, deviceID: deviceID) == true {
             return
         }
         AppLogger.audio.warning("Default output device supports neither settable mute nor volume")
     }
 
-    func restoreAfterDictation() {
+    func restoreAfterDictation(workflowID: UUID) {
+        // Delayed cleanup from an older press must not restore or discard the
+        // state owned by a newer dictation.
+        guard activeWorkflowID == workflowID else { return }
+        activeWorkflowID = nil
+        restorationTask?.cancel()
+        restorationTask = nil
         guard let savedState else { return }
-        let targets = Self.restorationTargets(
-            originalDeviceID: savedState.deviceID,
-            currentDeviceID: defaultOutputDevice()
-        )
+
+        restore(savedState)
+        restorationTask = Task { [weak self] in
+            await self?.runRestorationWatchdog(expectedState: savedState)
+        }
+    }
+
+    /// App termination cannot wait for the asynchronous verification loop.
+    /// Make one final best-effort write while the process is still alive.
+    func restoreImmediately() {
+        activeWorkflowID = nil
+        restorationTask?.cancel()
+        restorationTask = nil
+        guard let savedState else { return }
+        restore(savedState)
         self.savedState = nil
+    }
+
+    private func runRestorationWatchdog(expectedState: SavedState) async {
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: restorationRetryDelay)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled,
+                  activeWorkflowID == nil,
+                  savedState == expectedState else {
+                return
+            }
+
+            if isRestored(expectedState) {
+                do {
+                    try await Task.sleep(for: restorationQuietDelay)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled,
+                      activeWorkflowID == nil,
+                      savedState == expectedState else {
+                    return
+                }
+                if isRestored(expectedState) {
+                    savedState = nil
+                    restorationTask = nil
+                    return
+                }
+            }
+
+            // Core Audio and Bluetooth route changes can accept a write before
+            // the property has actually settled. Reapply until readback matches.
+            restore(expectedState)
+        }
+    }
+
+    private func isRestored(_ state: SavedState) -> Bool {
+        let targets = Self.restorationTargets(
+            originalDeviceID: state.deviceID,
+            currentDeviceID: deviceAccess.defaultOutputDevice()
+        )
+        var verifiedRoute = false
 
         for deviceID in targets {
-            restore(savedState, to: deviceID)
+            guard let matches = route(deviceID, matches: state) else { continue }
+            verifiedRoute = true
+            if !matches { return false }
+        }
+        return verifiedRoute
+    }
+
+    /// Returns nil when the route currently exposes none of the saved
+    /// properties, so another readable route can still verify restoration.
+    private func route(
+        _ deviceID: AudioObjectID,
+        matches state: SavedState
+    ) -> Bool? {
+        var comparedProperty = false
+
+        if let expectedMute = state.mute,
+           let currentMute = deviceAccess.readMute(deviceID: deviceID) {
+            comparedProperty = true
+            if currentMute != expectedMute { return false }
+        }
+
+        if let expectedVolume = state.volume,
+           let currentVolume = deviceAccess.readVolume(deviceID: deviceID) {
+            comparedProperty = true
+            if abs(currentVolume - expectedVolume) > 0.01 { return false }
+        }
+
+        return comparedProperty ? true : nil
+    }
+
+    private func restore(_ state: SavedState) {
+        let targets = Self.restorationTargets(
+            originalDeviceID: state.deviceID,
+            currentDeviceID: deviceAccess.defaultOutputDevice()
+        )
+        for deviceID in targets {
+            restore(state, to: deviceID)
         }
     }
 
@@ -102,11 +224,7 @@ final class SystemAudioOutputController: SystemAudioOutputControlling {
         // Restore volume before unmuting so playback cannot resume at an
         // intermediate level.
         if let volume = state.volume,
-           let succeeded = writeFloat32(
-               volume,
-               deviceID: deviceID,
-               selector: kAudioDevicePropertyVolumeScalar
-           ) {
+           let succeeded = deviceAccess.writeVolume(volume, deviceID: deviceID) {
             wroteValue = true
             if !succeeded {
                 AppLogger.audio.warning("Unable to restore output volume")
@@ -114,11 +232,7 @@ final class SystemAudioOutputController: SystemAudioOutputControlling {
         }
 
         if let mute = state.mute,
-           let succeeded = writeUInt32(
-               mute,
-               deviceID: deviceID,
-               selector: kAudioDevicePropertyMute
-           ) {
+           let succeeded = deviceAccess.writeMute(mute, deviceID: deviceID) {
             wroteValue = true
             if !succeeded {
                 AppLogger.audio.warning("Unable to restore output mute")
@@ -129,8 +243,11 @@ final class SystemAudioOutputController: SystemAudioOutputControlling {
             AppLogger.audio.warning("Unable to apply the saved output state to an audio route")
         }
     }
+}
 
-    private func defaultOutputDevice() -> AudioObjectID? {
+@MainActor
+private final class CoreAudioOutputDeviceAccess: AudioOutputDeviceAccess {
+    func defaultOutputDevice() -> AudioObjectID? {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -155,6 +272,36 @@ final class SystemAudioOutputController: SystemAudioOutputControlling {
             return nil
         }
         return deviceID
+    }
+
+    func readMute(deviceID: AudioObjectID) -> UInt32? {
+        readUInt32(
+            deviceID: deviceID,
+            selector: kAudioDevicePropertyMute
+        )
+    }
+
+    func readVolume(deviceID: AudioObjectID) -> Float32? {
+        readFloat32(
+            deviceID: deviceID,
+            selector: kAudioDevicePropertyVolumeScalar
+        )
+    }
+
+    func writeMute(_ value: UInt32, deviceID: AudioObjectID) -> Bool? {
+        writeUInt32(
+            value,
+            deviceID: deviceID,
+            selector: kAudioDevicePropertyMute
+        )
+    }
+
+    func writeVolume(_ value: Float32, deviceID: AudioObjectID) -> Bool? {
+        writeFloat32(
+            value,
+            deviceID: deviceID,
+            selector: kAudioDevicePropertyVolumeScalar
+        )
     }
 
     private func readUInt32(

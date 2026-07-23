@@ -86,6 +86,7 @@ protocol AudioRecording: AnyObject {
     var currentInputDeviceName: String { get }
     var availableInputDevices: [AudioInputDevice] { get }
     var inputLevel: Float { get }
+    var isReadyForRecording: Bool { get }
     var onInterruption: ((String) -> Void)? { get set }
     var onInputDeviceFallback: ((AudioInputSelection) -> Void)? { get set }
     func selectInputDevice(_ selection: AudioInputSelection) throws
@@ -361,6 +362,8 @@ private enum CoreAudioInputDevices {
 
 @MainActor
 final class AudioRecorder: AudioRecording {
+    private static let teardownDrainDuration: Duration = .milliseconds(750)
+
     private let permissionManager: MicrophonePermissionProviding
     private var inputSelection: AudioInputSelection
     private var fallbackInputSelection: AudioInputSelection?
@@ -369,6 +372,7 @@ final class AudioRecorder: AudioRecording {
     private var writer: LockedAudioWriter?
     private var recordingURL: URL?
     private var configurationObserver: NSObjectProtocol?
+    private var restartAllowedAt: ContinuousClock.Instant?
 
     var onInterruption: ((String) -> Void)?
     var onInputDeviceFallback: ((AudioInputSelection) -> Void)?
@@ -392,6 +396,11 @@ final class AudioRecorder: AudioRecording {
 
     var inputLevel: Float {
         AudioLevelScale.normalized(peakAmplitude: writer?.livePeakAmplitude ?? 0)
+    }
+
+    var isReadyForRecording: Bool {
+        guard let restartAllowedAt else { return true }
+        return ContinuousClock().now >= restartAllowedAt
     }
 
     init(
@@ -650,13 +659,16 @@ final class AudioRecorder: AudioRecording {
         engine.stop()
         self.engine = nil
         activeInputDeviceID = nil
+        let drainDuration = Self.teardownDrainDuration
+        restartAllowedAt = ContinuousClock().now.advanced(by: drainDuration)
 
         // Bluetooth route changes can leave AVAudioIOUnit property callbacks
         // executing briefly after stop() returns. Keep the stopped engine alive
-        // until those callbacks drain; deallocating it synchronously races the
-        // callback and can crash inside AVAudioEngine dealloc.
+        // and reject a new recording until those callbacks drain. Creating a
+        // replacement engine during that window can churn the Bluetooth
+        // input/output profiles until macOS drops the headset route entirely.
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(500))
+            try? await Task.sleep(for: drainDuration)
             withExtendedLifetime(engine) {}
         }
     }

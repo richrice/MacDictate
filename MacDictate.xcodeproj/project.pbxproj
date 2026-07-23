@@ -35,6 +35,7 @@
 		DBB2C92B465C4A78654057AE /* LaunchAtLoginManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E0E67F26C27978F12EE351A /* LaunchAtLoginManager.swift */; };
 		DBD61726347E092B5DD391DF /* DictationStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E97F9A070B80C6BF02B43B0 /* DictationStateMachine.swift */; };
 		E05EDCFB3912DED95D617B69 /* MultipartFormDataBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD9280D83AB953AE5E83E79F /* MultipartFormDataBuilder.swift */; };
+		EA025E821CF4092926953E16 /* SystemAudioOutputControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76D44FE36740D48CB5BCB85F /* SystemAudioOutputControllerTests.swift */; };
 		F8A8E25B8C4677AA5A866396 /* SystemAudioOutputController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 163134A363DB1F77398F7CF3 /* SystemAudioOutputController.swift */; };
 		FCC73F64FAE9B943DFCD8301 /* MacDictateApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D68115C40CED9D973B791C6F /* MacDictateApp.swift */; };
 /* End PBXBuildFile section */
@@ -66,6 +67,7 @@
 		5B4CC1BB9284C5D9EBA68554 /* Carbon.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Carbon.framework; path = System/Library/Frameworks/Carbon.framework; sourceTree = SDKROOT; };
 		7454CBBD68793DE172E24A67 /* MacDictate.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MacDictate.entitlements; sourceTree = "<group>"; };
 		74DD84626FEBAF7EF02266E7 /* GlobalHotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalHotkeyManager.swift; sourceTree = "<group>"; };
+		76D44FE36740D48CB5BCB85F /* SystemAudioOutputControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemAudioOutputControllerTests.swift; sourceTree = "<group>"; };
 		7DA91FFCA893DFC510713B81 /* HUDController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDController.swift; sourceTree = "<group>"; };
 		858782A062F50E08FA10011D /* StateMachineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StateMachineTests.swift; sourceTree = "<group>"; };
 		8DEF1F0CD2C050337AD86393 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
@@ -169,6 +171,7 @@
 				0A29F3A54D22BEFEEDB1469E /* MultipartAndTranscriptionTests.swift */,
 				858782A062F50E08FA10011D /* StateMachineTests.swift */,
 				3ED6EE8861F18DA90EDA0F3B /* StorageInsertionAndPrivacyTests.swift */,
+				76D44FE36740D48CB5BCB85F /* SystemAudioOutputControllerTests.swift */,
 			);
 			path = MacDictateTests;
 			sourceTree = "<group>";
@@ -262,6 +265,7 @@
 				41B56FF8932020628870B6A0 /* MultipartAndTranscriptionTests.swift in Sources */,
 				B5E4F870B7A448609BA950BC /* StateMachineTests.swift in Sources */,
 				86E3818D25681404F153B4BA /* StorageInsertionAndPrivacyTests.swift in Sources */,
+				EA025E821CF4092926953E16 /* SystemAudioOutputControllerTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

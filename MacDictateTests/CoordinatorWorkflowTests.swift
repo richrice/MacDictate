@@ -7,6 +7,7 @@ private final class MockAudioRecorder: AudioRecording {
     var currentInputDeviceName = "Mock Microphone"
     var availableInputDevices: [AudioInputDevice] = []
     var inputLevel: Float = 0
+    var isReadyForRecording = true
     var onInterruption: ((String) -> Void)?
     var onInputDeviceFallback: ((AudioInputSelection) -> Void)?
     private(set) var selectedInputDevice: AudioInputSelection = .systemDefault
@@ -122,20 +123,25 @@ private final class MockSystemAudioOutputController: SystemAudioOutputControllin
     var onPrepare: (() -> Void)?
     var onRestore: (() -> Void)?
     private var currentlyMuted = false
+    private var activeWorkflowID: UUID?
 
     var isCurrentlyMuted: Bool { currentlyMuted }
 
-    func prepareForDictation() {
+    func prepareForDictation(workflowID: UUID) {
+        activeWorkflowID = workflowID
         onPrepare?()
         prepareCount += 1
     }
 
-    func muteForDictation() {
+    func muteForDictation(workflowID: UUID) {
+        guard activeWorkflowID == workflowID else { return }
         muteCount += 1
         currentlyMuted = true
     }
 
-    func restoreAfterDictation() {
+    func restoreAfterDictation(workflowID: UUID) {
+        guard activeWorkflowID == workflowID else { return }
+        activeWorkflowID = nil
         onRestore?()
         restoreCount += 1
         currentlyMuted = false
@@ -404,6 +410,25 @@ final class CoordinatorWorkflowTests: XCTestCase {
 
         coordinator.cancelActive()
         XCTAssertFalse(audioOutputController.isCurrentlyMuted)
+    }
+
+    func testPressDuringInputTeardownDoesNotStartAnotherWorkflow() async throws {
+        recorder.isReadyForRecording = false
+
+        coordinator.beginDictation()
+
+        XCTAssertEqual(stateMachine.state, .idle)
+        XCTAssertEqual(audioOutputController.prepareCount, 0)
+        XCTAssertEqual(audioOutputController.muteCount, 0)
+
+        recorder.isReadyForRecording = true
+        coordinator.beginDictation()
+        await waitFor("recording should start after input teardown") {
+            if case .recording = self.stateMachine.state { true } else { false }
+        }
+
+        XCTAssertEqual(audioOutputController.prepareCount, 1)
+        coordinator.cancelActive()
     }
 
     func testCancelDuringTranscriptionEndsCleanlyWithoutError() async throws {

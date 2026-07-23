@@ -149,6 +149,10 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
     }
 
     func beginDictation() {
+        guard audioRecorder.isReadyForRecording else {
+            AppLogger.hotkey.info("Ignoring hotkey while the previous microphone session finishes closing")
+            return
+        }
         // A press during the brief terminal-state display should start a new
         // dictation immediately instead of being silently dropped.
         if stateMachine.state.isTerminal {
@@ -215,13 +219,16 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
 
     func cancelActive(showMessage: Bool = true) {
         guard stateMachine.state.isActive else { return }
+        let workflowID = activeWorkflowID
         activeWorkflowID = nil
         workflowTask?.cancel()
         workflowTask = nil
         maximumDurationTask?.cancel()
         maximumDurationTask = nil
         audioRecorder.cancel()
-        restoreSystemAudio()
+        if let workflowID {
+            restoreSystemAudio(for: workflowID)
+        }
         do {
             try stateMachine.transition(to: .cancelled(message: nil))
             if showMessage { AppLogger.lifecycle.info("Dictation cancelled") }
@@ -235,13 +242,16 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
     /// sound, no error details, just a short status message.
     private func cancelBenignly(message: String) {
         guard stateMachine.state.isActive else { return }
+        let workflowID = activeWorkflowID
         activeWorkflowID = nil
         workflowTask?.cancel()
         workflowTask = nil
         maximumDurationTask?.cancel()
         maximumDurationTask = nil
         audioRecorder.cancel()
-        restoreSystemAudio()
+        if let workflowID {
+            restoreSystemAudio(for: workflowID)
+        }
         try? stateMachine.transition(to: .cancelled(message: message))
         scheduleReset()
     }
@@ -257,7 +267,7 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         if enforceMinimum, !RecordingPolicy.shouldTranscribe(elapsed: elapsed) {
             activeWorkflowID = nil
             audioRecorder.cancel()
-            restoreSystemAudio()
+            restoreSystemAudio(for: workflowID)
             do {
                 try stateMachine.transition(to: .cancelled(message: nil))
                 scheduleReset()
@@ -363,7 +373,7 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
                 }
             }
             try stateMachine.transition(to: .completed(message: completionMessage))
-            restoreSystemAudio()
+            restoreSystemAudio(for: workflowID)
             activeWorkflowID = nil
             workflowTask = nil
             playSound(named: "Glass")
@@ -402,8 +412,8 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
 
     private func beginSystemAudioMuting(for workflowID: UUID) {
         guard settings.muteSystemAudioDuringDictation else { return }
-        audioOutputController.prepareForDictation()
-        audioOutputController.muteForDictation()
+        audioOutputController.prepareForDictation(workflowID: workflowID)
+        audioOutputController.muteForDictation(workflowID: workflowID)
         muteTask?.cancel()
         muteTask = Task { [weak self] in
             while !Task.isCancelled, let self {
@@ -416,19 +426,22 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
                 default:
                     return
                 }
-                self.audioOutputController.muteForDictation()
+                self.audioOutputController.muteForDictation(workflowID: workflowID)
             }
         }
     }
 
     private func fail(_ error: Error) {
+        let workflowID = activeWorkflowID
         activeWorkflowID = nil
         workflowTask?.cancel()
         workflowTask = nil
         maximumDurationTask?.cancel()
         maximumDurationTask = nil
         audioRecorder.cancel()
-        restoreSystemAudio()
+        if let workflowID {
+            restoreSystemAudio(for: workflowID)
+        }
         let friendly = error.localizedDescription
         lastErrorDetails = SecretRedactor.redact(String(reflecting: error))
         AppLogger.lifecycle.error("Dictation failed: \(friendly, privacy: .public)")
@@ -446,10 +459,10 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         scheduleReset(after: 3.0)
     }
 
-    private func restoreSystemAudio() {
+    private func restoreSystemAudio(for workflowID: UUID) {
         muteTask?.cancel()
         muteTask = nil
-        audioOutputController.restoreAfterDictation()
+        audioOutputController.restoreAfterDictation(workflowID: workflowID)
     }
 
     private func scheduleReset(after seconds: Double = 1.3) {
