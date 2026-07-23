@@ -90,16 +90,17 @@ The explicit workflow states are `idle`, `preparing`, `recording`, `transcribing
 - AVAudioEngine captures the input chosen in MacDictate, using its persistent Core Audio device ID without changing the system-wide input. The previous MacDictate input is remembered and used if the active microphone disconnects. AVAudioConverter writes mono 16 kHz, 16-bit linear PCM in a temporary WAV file. A five-minute ceiling keeps the largest default upload near 9.6 MB before WAV overhead.
 - URLSession posts binary-safe multipart form data to `https://api.openai.com/v1/audio/transcriptions`. HTTP 429 and transient 5xx responses receive at most one delayed retry, honoring a numeric `Retry-After` header up to five seconds; authentication and other permanent 4xx failures are not retried.
 - The app first tries the Accessibility selected-text attribute, then verifies that the exact expected value remains present rather than trusting the setter's return code. If that control rejects direct insertion, MacDictate sends Unicode keyboard events directly to the captured application and applies the same verification.
-- The Codex desktop composer uses a focused global Command-V event because its controlled browser editor can accept an Accessibility write without reflecting it in the visible composer, while a physical Command-V works. Other targets use paste only after earlier attempts are observably absent.
+- The Codex desktop composer and iTerm2 use paste-first delivery because their editors do not expose a reliably verifiable Accessibility value. Codex uses a focused global Command-V event matching its proven physical-paste path. Other targets use paste only after earlier attempts are observably absent.
 - Every automatic paste snapshots all pasteboard item representations, temporarily writes the transcript, and restores the snapshot after the verification window if no newer pasteboard generation appeared. Temporary transcript writes are marked with `org.nspasteboard.TransientType` so clipboard managers skip them.
-- Automatic delivery is never considered successful merely because an API call or event post returned successfully. If the result cannot be verified, MacDictate stops before risking a duplicate fallback and restores the pre-dictation clipboard. Codex reports **Paste sent** when its editor accepts the event but does not expose a verifiable Accessibility value; other ambiguous outcomes report **Insertion unconfirmed**.
+- Automatic delivery is never considered successful merely because an API call or event post returned successfully. If the result cannot be verified, MacDictate stops before risking a duplicate fallback and restores the pre-dictation clipboard. Codex and iTerm2 report **Paste sent** when the paste event is dispatched but their editor state is not Accessibility-verifiable; other ambiguous outcomes report **Insertion unconfirmed**.
 - If Accessibility access is unavailable, the transcript stays on the clipboard and the HUD says to press Command-V manually.
 
 MacDictate never synthesizes Return or Enter.
 
 ### Application-specific notes
 
-- **Apple Terminal and iTerm2:** their text views may reject the Accessibility selected-text attribute. Unicode keyboard insertion or the verified Command-V fallback is expected.
+- **Apple Terminal:** its text view may reject the Accessibility selected-text attribute. Unicode keyboard insertion or the verified Command-V fallback is expected.
+- **iTerm2:** MacDictate uses paste-first delivery and reports **Paste sent** when a terminal UI redraw prevents Accessibility verification.
 - **Codex desktop composer:** MacDictate uses the global focused paste route that matches a physical Command-V and keeps the transcript available long enough for the browser editor to consume it.
 - **VS Code, Cursor, and browser editors:** Electron/browser accessibility trees vary by version and editor. Direct insertion may work; otherwise MacDictate uses verified keyboard or paste delivery.
 - **SwiftUI TextEditor and standard AppKit text controls:** direct Accessibility insertion normally works.

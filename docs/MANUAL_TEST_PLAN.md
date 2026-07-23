@@ -114,7 +114,7 @@ Repeat a short dictation in each available target:
 6. A standard SwiftUI `TextEditor` in a small local test app.
 7. Safari or Chrome text area on a non-sensitive blank/test page.
 
-Expected: Codex uses a focused global Command-V event matching the proven manual paste path; the other targets use direct AX insertion, Unicode keyboard insertion, or a verified paste fallback. Codex accepts the transcript as text without interpreting it as an attachment. When the Codex editor does not expose a verifiable Accessibility value, the HUD accurately reports **Paste sent**; other unsupported or ambiguous fields report **Insertion unconfirmed**. The prior clipboard is restored in either case. Record which route appears to be used and each app version.
+Expected: Codex uses a focused global Command-V event matching the proven manual paste path; iTerm2 uses paste-first delivery; the other targets use direct AX insertion, Unicode keyboard insertion, or a verified paste fallback. Codex accepts the transcript as text without interpreting it as an attachment. When Codex or iTerm2 does not expose a verifiable Accessibility value, the HUD accurately reports **Paste sent**; other unsupported or ambiguous fields report **Insertion unconfirmed**. The prior clipboard is restored in either case. Record which route appears to be used and each app version.
 
 ## 11. Clipboard preservation
 

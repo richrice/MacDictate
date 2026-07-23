@@ -307,6 +307,37 @@ final class StorageInsertionAndPrivacyTests: XCTestCase {
         XCTAssertNil(clipboard.text)
     }
 
+    func testUnverifiableITermPasteIsReportedAsDispatched() async throws {
+        let permission = MockAccessibilityPermission()
+        let direct = MockDirectInserter()
+        let keyboard = MockKeyboardInserter()
+        let paste = MockPasteInserter()
+        paste.result = .unverified
+        let clipboard = MockClipboard()
+        let service = DefaultTextInsertionService(
+            permissionManager: permission,
+            directInserter: direct,
+            keyboardInserter: keyboard,
+            pasteInserter: paste,
+            clipboard: clipboard
+        )
+
+        let outcome = try await service.insert(
+            "hello iTerm2",
+            target: TargetApplication(
+                processIdentifier: 1,
+                bundleIdentifier: "com.googlecode.iterm2",
+                name: "iTerm2"
+            )
+        )
+
+        XCTAssertEqual(outcome, .pasteDispatched)
+        XCTAssertEqual(direct.calls, 0)
+        XCTAssertEqual(keyboard.calls, 0)
+        XCTAssertEqual(paste.calls, 1)
+        XCTAssertNil(clipboard.text)
+    }
+
     func testUnicodeEventChunksPreserveCharactersAndRespectNormalLimit() {
         let text = "1234567890123456789é👩🏽‍💻tail"
         let chunks = UnicodeKeyboardTextInserter.chunks(text, maximumUTF16Length: 20)

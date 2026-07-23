@@ -466,16 +466,23 @@ final class DefaultTextInsertionService: TextInsertionService {
             return .copiedForManualPaste
         }
 
-        if target.bundleIdentifier == "com.openai.codex" {
-            AppLogger.insertion.info("Using focused paste delivery for the Codex composer")
+        if target.bundleIdentifier == "com.openai.codex"
+            || target.bundleIdentifier == "com.googlecode.iterm2" {
+            AppLogger.insertion.info(
+                "Using focused paste delivery for \(target.name, privacy: .public)"
+            )
             switch try await pasteInserter.paste(text, target: target) {
             case .verified:
                 return .clipboardPaste
             case .unverified:
-                AppLogger.insertion.info("Codex paste was dispatched but its editor state is not Accessibility-verifiable")
+                AppLogger.insertion.info(
+                    "Paste was dispatched to \(target.name, privacy: .public) but its editor state is not Accessibility-verifiable"
+                )
                 return .pasteDispatched
             case .failed:
-                AppLogger.insertion.error("Codex paste was dispatched but no editor change was observed")
+                AppLogger.insertion.error(
+                    "Paste was dispatched to \(target.name, privacy: .public) but no editor change was observed"
+                )
                 return .automaticInsertionUnverified
             }
         }
