@@ -38,6 +38,7 @@ private struct HUDView: View {
         .font(.system(size: 14, weight: .medium))
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
+        .frame(minWidth: 190, maxWidth: 520, minHeight: 52)
         .background(.ultraThickMaterial, in: Capsule())
         .overlay(Capsule().stroke(.white.opacity(0.15)))
         .shadow(color: .black.opacity(0.3), radius: 12, y: 5)
@@ -87,8 +88,9 @@ private struct HUDView: View {
 }
 
 @MainActor
-final class HUDController {
-    private let panel: NSPanel
+final class HUDController: NSObject, NSWindowDelegate {
+    let panel: NSPanel
+    private let hostingController: NSHostingController<HUDView>
     private let stateMachine: DictationStateMachine
     private let settings: SettingsStore
     private let audioRecorder: AudioRecording
@@ -117,11 +119,24 @@ final class HUDController {
         panel.collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle, .fullScreenAuxiliary]
         panel.isMovable = false
         panel.worksWhenModal = true
+        // The hosting controller is created once and only its rootView is swapped afterwards.
+        // Replacing the contentViewController per phase re-entered window layout mid-display-cycle.
+        hostingController = NSHostingController(
+            rootView: HUDView(phase: .idle, audioRecorder: audioRecorder)
+        )
+        panel.contentViewController = hostingController
         self.panel = panel
+        super.init()
 
+        // SwiftUI owns the panel's size; we only recentre it once AppKit reports the new frame.
+        panel.delegate = self
         cancellable = stateMachine.$state.sink { [weak self] phase in
             MainActor.assumeIsolated { self?.render(phase) }
         }
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        positionPanel()
     }
 
     private func render(_ phase: DictationPhase) {
@@ -130,12 +145,7 @@ final class HUDController {
             panel.orderOut(nil)
             return
         }
-        panel.contentViewController = NSHostingController(
-            rootView: HUDView(phase: phase, audioRecorder: audioRecorder)
-        )
-        panel.contentViewController?.view.layoutSubtreeIfNeeded()
-        let fitting = panel.contentViewController?.view.fittingSize ?? NSSize(width: 300, height: 64)
-        panel.setContentSize(NSSize(width: min(max(fitting.width, 190), 520), height: max(fitting.height, 52)))
+        hostingController.rootView = HUDView(phase: phase, audioRecorder: audioRecorder)
         positionPanel()
         panel.orderFrontRegardless()
 

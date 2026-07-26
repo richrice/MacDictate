@@ -28,6 +28,7 @@
 		B01BE6AB93DFDCFD059F6E9B /* HUDController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DA91FFCA893DFC510713B81 /* HUDController.swift */; };
 		B35DB4AB1DA5B299EED3A860 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8DEF1F0CD2C050337AD86393 /* AVFoundation.framework */; };
 		B5588633C4FD297F17B9F6B4 /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 11732ED3FADCCF3EFCA53AB3 /* AudioToolbox.framework */; };
+		B5D999A035A560FED223C80B /* HUDControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A59268A231522568B1F751EE /* HUDControllerTests.swift */; };
 		B5E4F870B7A448609BA950BC /* StateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 858782A062F50E08FA10011D /* StateMachineTests.swift */; };
 		C4796C5B028FD0D316DDAE39 /* GlobalHotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74DD84626FEBAF7EF02266E7 /* GlobalHotkeyManager.swift */; };
 		D225FC388642DD50B5ED277E /* TranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D49EEF1F33C3EBE0CCFAAF69 /* TranscriptionService.swift */; };
@@ -73,6 +74,7 @@
 		8DEF1F0CD2C050337AD86393 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
 		8E97F9A070B80C6BF02B43B0 /* DictationStateMachine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationStateMachine.swift; sourceTree = "<group>"; };
 		9E0E67F26C27978F12EE351A /* LaunchAtLoginManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLoginManager.swift; sourceTree = "<group>"; };
+		A59268A231522568B1F751EE /* HUDControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDControllerTests.swift; sourceTree = "<group>"; };
 		AAEEAAC2C41334FC8B59E1A5 /* TextInsertionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextInsertionService.swift; sourceTree = "<group>"; };
 		AD9280D83AB953AE5E83E79F /* MultipartFormDataBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultipartFormDataBuilder.swift; sourceTree = "<group>"; };
 		ADC44C01F476BE4558A6CCD8 /* MacDictateTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MacDictateTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -168,6 +170,7 @@
 				46012278DED84F435E5FF482 /* AudioTapIsolationTests.swift */,
 				0B5A8BB43E85D857A1B0DF74 /* CoordinatorWorkflowTests.swift */,
 				BC68CEF538135058270CAAA6 /* HotkeyPresetTests.swift */,
+				A59268A231522568B1F751EE /* HUDControllerTests.swift */,
 				0A29F3A54D22BEFEEDB1469E /* MultipartAndTranscriptionTests.swift */,
 				858782A062F50E08FA10011D /* StateMachineTests.swift */,
 				3ED6EE8861F18DA90EDA0F3B /* StorageInsertionAndPrivacyTests.swift */,
@@ -261,6 +264,7 @@
 			files = (
 				027ECA044347A86A9058F8E3 /* AudioTapIsolationTests.swift in Sources */,
 				4E631438D18188CFA77B420F /* CoordinatorWorkflowTests.swift in Sources */,
+				B5D999A035A560FED223C80B /* HUDControllerTests.swift in Sources */,
 				26A9868A831420F7E2851948 /* HotkeyPresetTests.swift in Sources */,
 				41B56FF8932020628870B6A0 /* MultipartAndTranscriptionTests.swift in Sources */,
 				B5E4F870B7A448609BA950BC /* StateMachineTests.swift in Sources */,
