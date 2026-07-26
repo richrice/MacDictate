@@ -139,6 +139,66 @@ final class HotkeyPresetTests: XCTestCase {
         XCTAssertTrue(HotkeyShortcut.presets.contains(settings.hotkey))
     }
 
+    /// A preset's label is presentation, not identity. If it took part in equality, editing a
+    /// label in a future release would stop every persisted selection from matching a Picker tag.
+    func testShortcutIdentityIgnoresDisplayName() {
+        let stored = HotkeyShortcut(
+            keyCode: UInt32(kVK_Space),
+            carbonModifiers: UInt32(optionKey),
+            displayName: "⌥Space"
+        )
+
+        XCTAssertEqual(stored, HotkeyShortcut.defaultShortcut)
+        XCTAssertEqual(stored.hashValue, HotkeyShortcut.defaultShortcut.hashValue)
+        XCTAssertTrue(HotkeyShortcut.presets.contains(stored))
+    }
+
+    @MainActor
+    func testShortcutPersistedUnderAnOldLabelResolvesToTheCurrentPreset() throws {
+        let suiteName = "HotkeyRenameTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        // Same combination as the default preset, saved back when it was labelled differently.
+        let savedUnderOldLabel = HotkeyShortcut(
+            keyCode: UInt32(kVK_Space),
+            carbonModifiers: UInt32(optionKey),
+            displayName: "Option-Space"
+        )
+        defaults.set(try JSONEncoder().encode(savedUnderOldLabel), forKey: "hotkeyShortcut")
+
+        let settings = SettingsStore(defaults: defaults)
+
+        XCTAssertEqual(settings.hotkey, HotkeyShortcut.defaultShortcut)
+        XCTAssertEqual(settings.hotkey.displayName, HotkeyShortcut.defaultShortcut.displayName)
+    }
+
+    /// Registering tears the current hotkey down first, so a rejected shortcut must not be
+    /// allowed to leave the app with nothing registered.
+    @MainActor
+    func testRejectedShortcutKeepsThePreviousHotkeyRegistered() throws {
+        let working = HotkeyShortcut(keyCode: UInt32(kVK_F17), carbonModifiers: 0, displayName: "F17")
+        let contested = HotkeyShortcut(keyCode: UInt32(kVK_F18), carbonModifiers: 0, displayName: "F18")
+
+        let blocker = GlobalHotkeyManager()
+        defer { blocker.unregister() }
+        try XCTSkipUnless(
+            blocker.register(contested),
+            "Could not occupy \(contested.displayName) to simulate a conflict"
+        )
+
+        let manager = GlobalHotkeyManager()
+        defer { manager.unregister() }
+        XCTAssertTrue(manager.register(working))
+
+        XCTAssertFalse(manager.register(contested))
+        XCTAssertEqual(manager.registrationStatus, .conflict(contested.displayName))
+        XCTAssertEqual(manager.activeShortcut, working)
+    }
+
     @MainActor
     func testAudioInputSelectionAndFallbackPersist() throws {
         let suiteName = "AudioInputSelectionTests-\(UUID().uuidString)"

@@ -21,6 +21,10 @@ enum HotkeyRegistrationStatus: Equatable, Sendable {
 final class GlobalHotkeyManager: ObservableObject {
     @Published private(set) var registrationStatus: HotkeyRegistrationStatus = .notRegistered
 
+    /// The combination Carbon currently owns. This differs from the user's latest pick when
+    /// that pick failed to register and the previous shortcut was put back.
+    private(set) var activeShortcut: HotkeyShortcut?
+
     var onKeyDown: (() -> Void)?
     var onKeyUp: (() -> Void)?
 
@@ -57,9 +61,47 @@ final class GlobalHotkeyManager: ObservableObject {
         if let eventHandler { RemoveEventHandler(eventHandler) }
     }
 
-    func register(_ shortcut: HotkeyShortcut) {
+    /// Returns whether `shortcut` became the active hotkey. Registering requires tearing the
+    /// current one down first, so a failed attempt would otherwise leave the app with no
+    /// working hotkey at all; the previous shortcut is restored instead.
+    @discardableResult
+    func register(_ shortcut: HotkeyShortcut) -> Bool {
+        let previous = activeShortcut
         unregister()
-        let status = RegisterEventHotKey(
+
+        let status = installHotkey(shortcut)
+        if status == noErr {
+            activeShortcut = shortcut
+            registrationStatus = .registered(shortcut.displayName)
+            AppLogger.hotkey.info("Global hotkey registered")
+            return true
+        }
+
+        if status == OSStatus(eventHotKeyExistsErr) {
+            registrationStatus = .conflict(shortcut.displayName)
+            AppLogger.hotkey.error("Global hotkey conflicts with another application")
+        } else {
+            registrationStatus = .failed("Carbon error \(status)")
+            AppLogger.hotkey.error("Global hotkey registration failed with status \(status)")
+        }
+
+        if let previous, previous != shortcut, installHotkey(previous) == noErr {
+            activeShortcut = previous
+            AppLogger.hotkey.info("Kept the previously registered global hotkey")
+        }
+        return false
+    }
+
+    func unregister() {
+        if let hotkeyRef { UnregisterEventHotKey(hotkeyRef) }
+        hotkeyRef = nil
+        activeShortcut = nil
+        isPressed = false
+        if case .registered = registrationStatus { registrationStatus = .notRegistered }
+    }
+
+    private func installHotkey(_ shortcut: HotkeyShortcut) -> OSStatus {
+        RegisterEventHotKey(
             shortcut.keyCode,
             shortcut.carbonModifiers,
             hotkeyID,
@@ -67,24 +109,6 @@ final class GlobalHotkeyManager: ObservableObject {
             0,
             &hotkeyRef
         )
-        switch status {
-        case noErr:
-            registrationStatus = .registered(shortcut.displayName)
-            AppLogger.hotkey.info("Global hotkey registered")
-        case OSStatus(eventHotKeyExistsErr):
-            registrationStatus = .conflict(shortcut.displayName)
-            AppLogger.hotkey.error("Global hotkey conflicts with another application")
-        default:
-            registrationStatus = .failed("Carbon error \(status)")
-            AppLogger.hotkey.error("Global hotkey registration failed with status \(status)")
-        }
-    }
-
-    func unregister() {
-        if let hotkeyRef { UnregisterEventHotKey(hotkeyRef) }
-        hotkeyRef = nil
-        isPressed = false
-        if case .registered = registrationStatus { registrationStatus = .notRegistered }
     }
 
     private func handle(kind: UInt32, identifier: UInt32) -> OSStatus {

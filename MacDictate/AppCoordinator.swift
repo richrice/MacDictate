@@ -130,7 +130,7 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
             .dropFirst()
             .removeDuplicates()
             .sink { [weak self] shortcut in
-                MainActor.assumeIsolated { self?.hotkeyManager.register(shortcut) }
+                MainActor.assumeIsolated { self?.applyHotkey(shortcut) }
             }
         stateCancellable = stateMachine.$state.sink { [weak self] state in
             MainActor.assumeIsolated { self?.updateMenu(for: state) }
@@ -146,6 +146,16 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         }
         rememberFrontmostApplication()
         AppLogger.lifecycle.info("MacDictate launched")
+    }
+
+    private func applyHotkey(_ shortcut: HotkeyShortcut) {
+        if hotkeyManager.register(shortcut) { return }
+        guard let restored = hotkeyManager.activeShortcut else { return }
+        // $hotkey publishes before the property is assigned, so reverting here would be
+        // overwritten by the in-flight assignment — and then persisted by its didSet.
+        Task { @MainActor [weak self] in
+            self?.settings.hotkey = restored
+        }
     }
 
     func beginDictation() {

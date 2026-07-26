@@ -36,6 +36,19 @@ struct HotkeyShortcut: Codable, Hashable, Identifiable, Sendable {
 
     var id: String { "\(keyCode)-\(carbonModifiers)" }
 
+    // Identity is the key combination alone. SwiftUI matches Picker tags with Equatable, so
+    // synthesized conformance would orphan every persisted selection the moment a preset's
+    // label is edited: the stored value would still drive the right Carbon hotkey but match
+    // no tag, leaving the picker blank.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.keyCode == rhs.keyCode && lhs.carbonModifiers == rhs.carbonModifiers
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(keyCode)
+        hasher.combine(carbonModifiers)
+    }
+
     static let defaultShortcut = HotkeyShortcut(
         keyCode: UInt32(kVK_Space),
         carbonModifiers: UInt32(optionKey),
@@ -149,7 +162,9 @@ final class SettingsStore: ObservableObject {
 
         if let data = defaults.data(forKey: Key.hotkey),
            let decoded = try? JSONDecoder().decode(HotkeyShortcut.self, from: data) {
-            hotkey = decoded
+            // Adopt the current preset's label so a renamed preset doesn't leave a stale
+            // display string in the UI for users who saved it under the old name.
+            hotkey = HotkeyShortcut.presets.first { $0.id == decoded.id } ?? decoded
         } else {
             hotkey = .defaultShortcut
         }
