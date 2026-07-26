@@ -11,6 +11,7 @@ xcuserdata/
 *.dSYM
 .swiftpm/
 .build/
+.orchestration/
 *.wav
 .env
 
