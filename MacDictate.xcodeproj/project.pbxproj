@@ -23,6 +23,7 @@
 		41B56FF8932020628870B6A0 /* MultipartAndTranscriptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A29F3A54D22BEFEEDB1469E /* MultipartAndTranscriptionTests.swift */; };
 		4B8770661F2399F4736D2412 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA66AF8B5D028F384900315E /* SettingsView.swift */; };
 		4E631438D18188CFA77B420F /* CoordinatorWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B5A8BB43E85D857A1B0DF74 /* CoordinatorWorkflowTests.swift */; };
+		7DCA304DFE1CC1A9FC705128 /* DuplicateInstanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE3222425FA59F7CE7FB0CC3 /* DuplicateInstanceTests.swift */; };
 		868043B0A73AB2CE5781F6DD /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F815C5A9419693A807248C6B /* AudioRecorder.swift */; };
 		86E3818D25681404F153B4BA /* StorageInsertionAndPrivacyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED6EE8861F18DA90EDA0F3B /* StorageInsertionAndPrivacyTests.swift */; };
 		A30444BFEED81AA42D43566B /* Diagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE21880EACD3E2D7D0F79ED1 /* Diagnostics.swift */; };
@@ -83,6 +84,7 @@
 		AE21880EACD3E2D7D0F79ED1 /* Diagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Diagnostics.swift; sourceTree = "<group>"; };
 		BC68CEF538135058270CAAA6 /* HotkeyPresetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyPresetTests.swift; sourceTree = "<group>"; };
 		CD9A0D7169D0D9C3BBB31B66 /* AppLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLogger.swift; sourceTree = "<group>"; };
+		CE3222425FA59F7CE7FB0CC3 /* DuplicateInstanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuplicateInstanceTests.swift; sourceTree = "<group>"; };
 		D49EEF1F33C3EBE0CCFAAF69 /* TranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionService.swift; sourceTree = "<group>"; };
 		D63BC4748092AD419F94090C /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		D68115C40CED9D973B791C6F /* MacDictateApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacDictateApp.swift; sourceTree = "<group>"; };
@@ -172,6 +174,7 @@
 			children = (
 				46012278DED84F435E5FF482 /* AudioTapIsolationTests.swift */,
 				0B5A8BB43E85D857A1B0DF74 /* CoordinatorWorkflowTests.swift */,
+				CE3222425FA59F7CE7FB0CC3 /* DuplicateInstanceTests.swift */,
 				BC68CEF538135058270CAAA6 /* HotkeyPresetTests.swift */,
 				A59268A231522568B1F751EE /* HUDControllerTests.swift */,
 				0A29F3A54D22BEFEEDB1469E /* MultipartAndTranscriptionTests.swift */,
@@ -267,6 +270,7 @@
 			files = (
 				027ECA044347A86A9058F8E3 /* AudioTapIsolationTests.swift in Sources */,
 				4E631438D18188CFA77B420F /* CoordinatorWorkflowTests.swift in Sources */,
+				7DCA304DFE1CC1A9FC705128 /* DuplicateInstanceTests.swift in Sources */,
 				B5D999A035A560FED223C80B /* HUDControllerTests.swift in Sources */,
 				26A9868A831420F7E2851948 /* HotkeyPresetTests.swift in Sources */,
 				41B56FF8932020628870B6A0 /* MultipartAndTranscriptionTests.swift in Sources */,
