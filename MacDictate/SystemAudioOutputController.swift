@@ -7,7 +7,9 @@ protocol SystemAudioOutputControlling: AnyObject {
     /// the Bluetooth profile. A baseline already owned by a rapid sequence of
     /// dictations is preserved instead of being recaptured.
     func prepareForDictation(workflowID: UUID)
-    /// Mutes the current default output. Repeated calls cover profile changes.
+    /// Quiets the current default output, falling back to pausing playback on
+    /// routes that expose no volume control. Repeated calls cover profile
+    /// changes and are idempotent for the fallback.
     func muteForDictation(workflowID: UUID)
     /// Starts verified restoration for the workflow that currently owns mute.
     func restoreAfterDictation(workflowID: UUID)
@@ -31,19 +33,23 @@ final class SystemAudioOutputController: SystemAudioOutputControlling {
     }
 
     private let deviceAccess: AudioOutputDeviceAccess
+    private let playbackController: MediaPlaybackControlling
     private let restorationRetryDelay: Duration
     private let restorationQuietDelay: Duration
 
     private var savedState: SavedState?
     private var activeWorkflowID: UUID?
     private var restorationTask: Task<Void, Never>?
+    private var pausedPlayback = false
 
     init(
         deviceAccess: AudioOutputDeviceAccess = CoreAudioOutputDeviceAccess(),
+        playbackController: MediaPlaybackControlling = MediaPlaybackController(),
         restorationRetryDelay: Duration = .milliseconds(100),
         restorationQuietDelay: Duration = .seconds(2)
     ) {
         self.deviceAccess = deviceAccess
+        self.playbackController = playbackController
         self.restorationRetryDelay = restorationRetryDelay
         self.restorationQuietDelay = restorationQuietDelay
     }
@@ -61,10 +67,9 @@ final class SystemAudioOutputController: SystemAudioOutputControlling {
 
         let mute = deviceAccess.readMute(deviceID: deviceID)
         let volume = deviceAccess.readVolume(deviceID: deviceID)
-        guard mute != nil || volume != nil else {
-            AppLogger.audio.warning("Default output device exposes no readable mute or volume state")
-            return
-        }
+        // A route with nothing to read has nothing to restore either, so the
+        // fallback in muteForDictation takes over without a baseline.
+        guard mute != nil || volume != nil else { return }
         savedState = SavedState(
             deviceID: deviceID,
             mute: mute,
@@ -77,18 +82,35 @@ final class SystemAudioOutputController: SystemAudioOutputControlling {
         if savedState == nil {
             prepareForDictation(workflowID: workflowID)
         }
-        guard savedState != nil,
-              let deviceID = deviceAccess.defaultOutputDevice() else {
-            return
+        if savedState != nil, let deviceID = deviceAccess.defaultOutputDevice() {
+            if deviceAccess.writeMute(1, deviceID: deviceID) == true {
+                return
+            }
+            if deviceAccess.writeVolume(0, deviceID: deviceID) == true {
+                return
+            }
         }
 
-        if deviceAccess.writeMute(1, deviceID: deviceID) == true {
+        // HDMI displays and other digital outputs delegate volume to the
+        // receiving hardware, so CoreAudio cannot attenuate them at all.
+        // Pausing whatever is playing is the only way to quiet the room.
+        pausePlayback()
+    }
+
+    private func pausePlayback() {
+        guard !pausedPlayback,
+              playbackController.isOtherProcessPlayingAudio() else {
             return
         }
-        if deviceAccess.writeVolume(0, deviceID: deviceID) == true {
-            return
-        }
-        AppLogger.audio.warning("Default output device supports neither settable mute nor volume")
+        playbackController.togglePlayPause()
+        pausedPlayback = true
+        AppLogger.audio.info("Output route offers no volume control; paused media playback for dictation")
+    }
+
+    private func resumePlayback() {
+        guard pausedPlayback else { return }
+        pausedPlayback = false
+        playbackController.togglePlayPause()
     }
 
     func restoreAfterDictation(workflowID: UUID) {
@@ -98,6 +120,7 @@ final class SystemAudioOutputController: SystemAudioOutputControlling {
         activeWorkflowID = nil
         restorationTask?.cancel()
         restorationTask = nil
+        resumePlayback()
         guard let savedState else { return }
 
         restore(savedState)
@@ -112,6 +135,7 @@ final class SystemAudioOutputController: SystemAudioOutputControlling {
         activeWorkflowID = nil
         restorationTask?.cancel()
         restorationTask = nil
+        resumePlayback()
         guard let savedState else { return }
         restore(savedState)
         self.savedState = nil

@@ -8,6 +8,7 @@ private final class MockAudioOutputDeviceAccess: AudioOutputDeviceAccess {
     var muteValues: [AudioObjectID: UInt32] = [1: 0]
     var volumeValues: [AudioObjectID: Float32] = [1: 0.7]
     var supportsMute = true
+    var supportsVolume = true
     var ignoredUnmuteWrites = 0
     var ignoredPositiveVolumeWrites = 0
     private(set) var unmuteWriteCount = 0
@@ -21,7 +22,7 @@ private final class MockAudioOutputDeviceAccess: AudioOutputDeviceAccess {
     }
 
     func readVolume(deviceID: AudioObjectID) -> Float32? {
-        volumeValues[deviceID]
+        supportsVolume ? volumeValues[deviceID] : nil
     }
 
     func writeMute(_ value: UInt32, deviceID: AudioObjectID) -> Bool? {
@@ -38,6 +39,7 @@ private final class MockAudioOutputDeviceAccess: AudioOutputDeviceAccess {
     }
 
     func writeVolume(_ value: Float32, deviceID: AudioObjectID) -> Bool? {
+        guard supportsVolume else { return nil }
         if value > 0, ignoredPositiveVolumeWrites > 0 {
             ignoredPositiveVolumeWrites -= 1
             return true
@@ -48,16 +50,42 @@ private final class MockAudioOutputDeviceAccess: AudioOutputDeviceAccess {
 }
 
 @MainActor
+private final class MockMediaPlaybackController: MediaPlaybackControlling {
+    var otherProcessIsPlaying = false
+    private(set) var toggleCount = 0
+
+    func isOtherProcessPlayingAudio() -> Bool {
+        otherProcessIsPlaying
+    }
+
+    func togglePlayPause() {
+        toggleCount += 1
+        otherProcessIsPlaying.toggle()
+    }
+}
+
+@MainActor
 final class SystemAudioOutputControllerTests: XCTestCase {
     private func makeController(
         access: MockAudioOutputDeviceAccess,
+        playback: MediaPlaybackControlling = MockMediaPlaybackController(),
         quietDelay: Duration = .milliseconds(40)
     ) -> SystemAudioOutputController {
         SystemAudioOutputController(
             deviceAccess: access,
+            playbackController: playback,
             restorationRetryDelay: .milliseconds(10),
             restorationQuietDelay: quietDelay
         )
+    }
+
+    /// An HDMI display exposes neither mute nor volume, so nothing can be
+    /// attenuated and playback has to be paused instead.
+    private func makeUncontrollableAccess() -> MockAudioOutputDeviceAccess {
+        let access = MockAudioOutputDeviceAccess()
+        access.supportsMute = false
+        access.supportsVolume = false
+        return access
     }
 
     private func waitFor(
@@ -139,6 +167,84 @@ final class SystemAudioOutputControllerTests: XCTestCase {
         await waitFor("fallback route should restore its original volume") {
             access.volumeValues[1] == Float32(0.63)
         }
+    }
+
+    func testUncontrollableRoutePausesAndResumesPlayback() {
+        let access = makeUncontrollableAccess()
+        let playback = MockMediaPlaybackController()
+        playback.otherProcessIsPlaying = true
+        let controller = makeController(access: access, playback: playback)
+        let workflowID = UUID()
+
+        controller.prepareForDictation(workflowID: workflowID)
+        controller.muteForDictation(workflowID: workflowID)
+        XCTAssertEqual(playback.toggleCount, 1)
+        XCTAssertFalse(playback.isOtherProcessPlayingAudio())
+
+        controller.restoreAfterDictation(workflowID: workflowID)
+        XCTAssertEqual(playback.toggleCount, 2)
+        XCTAssertTrue(playback.isOtherProcessPlayingAudio())
+    }
+
+    func testRepeatedMuteCallsPausePlaybackOnlyOnce() {
+        let access = makeUncontrollableAccess()
+        let playback = MockMediaPlaybackController()
+        playback.otherProcessIsPlaying = true
+        let controller = makeController(access: access, playback: playback)
+        let workflowID = UUID()
+
+        controller.prepareForDictation(workflowID: workflowID)
+        // The coordinator re-mutes every 100ms to cover route changes; the
+        // toggle must not flip playback back on.
+        for _ in 0..<5 {
+            controller.muteForDictation(workflowID: workflowID)
+        }
+
+        XCTAssertEqual(playback.toggleCount, 1)
+        XCTAssertFalse(playback.isOtherProcessPlayingAudio())
+    }
+
+    func testSilentRouteIsNotToggledIntoPlayback() {
+        let access = makeUncontrollableAccess()
+        let playback = MockMediaPlaybackController()
+        playback.otherProcessIsPlaying = false
+        let controller = makeController(access: access, playback: playback)
+        let workflowID = UUID()
+
+        controller.prepareForDictation(workflowID: workflowID)
+        controller.muteForDictation(workflowID: workflowID)
+        controller.restoreAfterDictation(workflowID: workflowID)
+
+        XCTAssertEqual(playback.toggleCount, 0)
+    }
+
+    func testControllableRouteMutesWithoutTouchingPlayback() {
+        let access = MockAudioOutputDeviceAccess()
+        let playback = MockMediaPlaybackController()
+        playback.otherProcessIsPlaying = true
+        let controller = makeController(access: access, playback: playback)
+        let workflowID = UUID()
+
+        controller.prepareForDictation(workflowID: workflowID)
+        controller.muteForDictation(workflowID: workflowID)
+
+        XCTAssertEqual(access.muteValues[1], 1)
+        XCTAssertEqual(playback.toggleCount, 0)
+    }
+
+    func testTerminationResumesPausedPlayback() {
+        let access = makeUncontrollableAccess()
+        let playback = MockMediaPlaybackController()
+        playback.otherProcessIsPlaying = true
+        let controller = makeController(access: access, playback: playback)
+        let workflowID = UUID()
+
+        controller.prepareForDictation(workflowID: workflowID)
+        controller.muteForDictation(workflowID: workflowID)
+        controller.restoreImmediately()
+
+        XCTAssertEqual(playback.toggleCount, 2)
+        XCTAssertTrue(playback.isOtherProcessPlayingAudio())
     }
 
     func testStaleWorkflowCannotRestoreAudioOwnedByNewWorkflow() async {
