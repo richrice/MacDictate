@@ -43,6 +43,58 @@ enum TranscriptionError: LocalizedError, Equatable {
     }
 }
 
+enum APIKeyVerification: Equatable, Sendable {
+    case valid
+    case invalid(String)
+    case couldNotVerify(String)
+}
+
+/// Checks an API key against a cheap authenticated endpoint so a typo surfaces
+/// at save time instead of failing mid-dictation.
+struct OpenAIKeyVerifier: Sendable {
+    private let session: URLSession
+
+    init(session: URLSession = OpenAIKeyVerifier.makeSession()) {
+        self.session = session
+    }
+
+    func verify(_ apiKey: String) async -> APIKeyVerification {
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/models")!)
+        request.timeoutInterval = 15
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        do {
+            let (_, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                return .couldNotVerify("The service did not return an HTTP response.")
+            }
+            return Self.evaluate(statusCode: http.statusCode)
+        } catch {
+            return .couldNotVerify(error.localizedDescription)
+        }
+    }
+
+    static func evaluate(statusCode: Int) -> APIKeyVerification {
+        switch statusCode {
+        case 200...299:
+            .valid
+        case 401, 403:
+            .invalid("OpenAI rejected this key (HTTP \(statusCode)).")
+        default:
+            .couldNotVerify("OpenAI responded with HTTP \(statusCode).")
+        }
+    }
+
+    private static func makeSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 15
+        configuration.timeoutIntervalForResource = 30
+        configuration.waitsForConnectivity = false
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        return URLSession(configuration: configuration)
+    }
+}
+
 /// Transcription models given (near-)silent audio sometimes hallucinate the
 /// request's context prompt back as the "transcription", often wrapped in
 /// markers like `###`. Detect that so it is treated as no speech.

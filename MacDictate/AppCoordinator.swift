@@ -50,9 +50,11 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
     private var microphoneMenu: NSMenu?
     private var microphoneMenuSelections: [Int: AudioInputSelection] = [:]
     private var settingsWindowController: SettingsWindowController?
+    private var welcomeWindowController: WelcomeWindowController?
     private var hudController: HUDController?
     private var stateCancellable: AnyCancellable?
     private var hotkeyCancellable: AnyCancellable?
+    private var hotkeyStatusCancellable: AnyCancellable?
     private var workspaceObserver: NSObjectProtocol?
     private var settingsObserver: NSObjectProtocol?
     private var activeWorkflowID: UUID?
@@ -103,6 +105,13 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
             settings: settings,
             audioRecorder: audioRecorder
         )
+        // Show onboarding only when it can help: a brand-new install (no flag,
+        // no key) or a first run that was never acknowledged. Existing users
+        // upgrading with a working key keep their quiet menu-bar launch.
+        let hasStoredKey = ((try? credentialStore.load()) ?? nil) != nil
+        if !settings.hasCompletedSetup, !hasStoredKey {
+            showWelcomeWindow()
+        }
 
         do {
             try audioRecorder.selectInputDevice(settings.audioInputSelection)
@@ -135,6 +144,15 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         stateCancellable = stateMachine.$state.sink { [weak self] state in
             MainActor.assumeIsolated { self?.updateMenu(for: state) }
         }
+        hotkeyStatusCancellable = hotkeyManager.$registrationStatus
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.updateMenu(for: self.stateMachine.state)
+                }
+            }
 
         observeApplicationActivation()
         settingsObserver = NotificationCenter.default.addObserver(
@@ -279,8 +297,10 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
             audioRecorder.cancel()
             restoreSystemAudio(for: workflowID)
             do {
-                try stateMachine.transition(to: .cancelled(message: nil))
-                scheduleReset()
+                try stateMachine.transition(
+                    to: .cancelled(message: "Pressed too briefly — hold while speaking.")
+                )
+                scheduleReset(after: 2.0)
             } catch {
                 fail(error)
             }
@@ -466,7 +486,7 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         playSound(named: "Basso")
         // Errors stay visible longer than routine terminal states so the HUD
         // message can actually be read before the state resets to idle.
-        scheduleReset(after: 3.0)
+        scheduleReset(after: 4.0)
     }
 
     private func restoreSystemAudio(for workflowID: UUID) {
@@ -600,8 +620,19 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         settingsWindowController = SettingsWindowController(rootView: view)
     }
 
+    private var hasHotkeyRegistrationProblem: Bool {
+        switch hotkeyManager.registrationStatus {
+        case .conflict, .failed: true
+        default: false
+        }
+    }
+
     private func updateMenu(for state: DictationPhase) {
-        statusMenuItem?.title = state.statusText
+        var statusText = state.statusText
+        if state == .idle, hasHotkeyRegistrationProblem {
+            statusText = "Shortcut unavailable — choose another in Settings…"
+        }
+        statusMenuItem?.title = statusText
         startMenuItem?.isEnabled = state == .idle
         if case .recording = state {
             stopMenuItem?.isEnabled = true
@@ -617,10 +648,33 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         case .recording: symbol = "mic.fill"
         case .preparing, .transcribing, .inserting: symbol = "ellipsis.circle"
         case .failed: symbol = "exclamationmark.triangle.fill"
+        case .idle where hasHotkeyRegistrationProblem: symbol = "exclamationmark.triangle.fill"
         default: symbol = "waveform"
         }
-        statusItem?.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: state.statusText)
-        statusItem?.button?.toolTip = "MacDictate — \(state.statusText)"
+        statusItem?.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: statusText)
+        statusItem?.button?.toolTip = "MacDictate — \(statusText)"
+    }
+
+    private func showWelcomeWindow() {
+        let view = WelcomeView(
+            settings: settings,
+            credentials: CredentialSettingsModel(store: credentialStore),
+            microphonePermission: microphonePermission,
+            accessibilityPermission: accessibilityPermission,
+            hotkeyManager: hotkeyManager,
+            onFinish: { [weak self] in
+                self?.settings.hasCompletedSetup = true
+                self?.dismissWelcomeWindow()
+            },
+            onOpenSettings: { [weak self] in self?.openSettings() }
+        )
+        welcomeWindowController = WelcomeWindowController(rootView: view)
+        welcomeWindowController?.show()
+    }
+
+    private func dismissWelcomeWindow() {
+        welcomeWindowController?.dismiss()
+        welcomeWindowController = nil
     }
 
     func menuWillOpen(_ menu: NSMenu) {

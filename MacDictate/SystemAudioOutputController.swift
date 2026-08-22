@@ -36,27 +36,42 @@ final class SystemAudioOutputController: SystemAudioOutputControlling {
     private let playbackController: MediaPlaybackControlling
     private let restorationRetryDelay: Duration
     private let restorationQuietDelay: Duration
+    private let now: () -> Date
 
     private var savedState: SavedState?
     private var activeWorkflowID: UUID?
     private var restorationTask: Task<Void, Never>?
     private var pausedPlayback = false
+    private var playbackRunningSince: Date?
+
+    /// The play/pause media key is a blind toggle, so it must only be sent when
+    /// playback is genuinely audible. The running-output signal also reads true
+    /// briefly after media is paused (stream teardown lag) and for short UI or
+    /// notification sounds, and a false positive would unpause paused media.
+    /// Require the signal to persist across the coordinator's re-mute cadence
+    /// before trusting it; real music and video sustain it indefinitely.
+    static let playbackConfirmationDelay: TimeInterval = 0.5
 
     init(
         deviceAccess: AudioOutputDeviceAccess = CoreAudioOutputDeviceAccess(),
         playbackController: MediaPlaybackControlling = MediaPlaybackController(),
         restorationRetryDelay: Duration = .milliseconds(100),
-        restorationQuietDelay: Duration = .seconds(2)
+        restorationQuietDelay: Duration = .seconds(2),
+        now: @escaping () -> Date = { Date() }
     ) {
         self.deviceAccess = deviceAccess
         self.playbackController = playbackController
         self.restorationRetryDelay = restorationRetryDelay
         self.restorationQuietDelay = restorationQuietDelay
+        self.now = now
     }
 
     func prepareForDictation(workflowID: UUID) {
         restorationTask?.cancel()
         restorationTask = nil
+        if activeWorkflowID != workflowID {
+            playbackRunningSince = nil
+        }
         activeWorkflowID = workflowID
 
         // Keep the first trusted baseline until it has been restored and has
@@ -98,16 +113,25 @@ final class SystemAudioOutputController: SystemAudioOutputControlling {
     }
 
     private func pausePlayback() {
-        guard !pausedPlayback,
-              playbackController.isOtherProcessPlayingAudio() else {
+        guard !pausedPlayback else { return }
+        guard playbackController.isOtherProcessPlayingAudio() else {
+            playbackRunningSince = nil
+            return
+        }
+        let currentTime = now()
+        let since = playbackRunningSince ?? currentTime
+        playbackRunningSince = since
+        guard currentTime.timeIntervalSince(since) >= Self.playbackConfirmationDelay else {
             return
         }
         playbackController.togglePlayPause()
         pausedPlayback = true
+        playbackRunningSince = nil
         AppLogger.audio.info("Output route offers no volume control; paused media playback for dictation")
     }
 
     private func resumePlayback() {
+        playbackRunningSince = nil
         guard pausedPlayback else { return }
         pausedPlayback = false
         playbackController.togglePlayPause()

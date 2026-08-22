@@ -65,17 +65,26 @@ private final class MockMediaPlaybackController: MediaPlaybackControlling {
 }
 
 @MainActor
+private final class FakeClock {
+    private var current = Date(timeIntervalSinceReferenceDate: 0)
+    func now() -> Date { current }
+    func advance(by interval: TimeInterval) { current = current.addingTimeInterval(interval) }
+}
+
+@MainActor
 final class SystemAudioOutputControllerTests: XCTestCase {
     private func makeController(
         access: MockAudioOutputDeviceAccess,
         playback: MediaPlaybackControlling = MockMediaPlaybackController(),
-        quietDelay: Duration = .milliseconds(40)
+        quietDelay: Duration = .milliseconds(40),
+        clock: FakeClock = FakeClock()
     ) -> SystemAudioOutputController {
         SystemAudioOutputController(
             deviceAccess: access,
             playbackController: playback,
             restorationRetryDelay: .milliseconds(10),
-            restorationQuietDelay: quietDelay
+            restorationQuietDelay: quietDelay,
+            now: { clock.now() }
         )
     }
 
@@ -173,10 +182,15 @@ final class SystemAudioOutputControllerTests: XCTestCase {
         let access = makeUncontrollableAccess()
         let playback = MockMediaPlaybackController()
         playback.otherProcessIsPlaying = true
-        let controller = makeController(access: access, playback: playback)
+        let clock = FakeClock()
+        let controller = makeController(access: access, playback: playback, clock: clock)
         let workflowID = UUID()
 
         controller.prepareForDictation(workflowID: workflowID)
+        controller.muteForDictation(workflowID: workflowID)
+        XCTAssertEqual(playback.toggleCount, 0)
+
+        clock.advance(by: SystemAudioOutputController.playbackConfirmationDelay + 0.1)
         controller.muteForDictation(workflowID: workflowID)
         XCTAssertEqual(playback.toggleCount, 1)
         XCTAssertFalse(playback.isOtherProcessPlayingAudio())
@@ -190,17 +204,44 @@ final class SystemAudioOutputControllerTests: XCTestCase {
         let access = makeUncontrollableAccess()
         let playback = MockMediaPlaybackController()
         playback.otherProcessIsPlaying = true
-        let controller = makeController(access: access, playback: playback)
+        let clock = FakeClock()
+        let controller = makeController(access: access, playback: playback, clock: clock)
         let workflowID = UUID()
 
         controller.prepareForDictation(workflowID: workflowID)
         // The coordinator re-mutes every 100ms to cover route changes; the
-        // toggle must not flip playback back on.
-        for _ in 0..<5 {
+        // toggle must fire once after the playing signal is sustained and must
+        // not flip playback back on.
+        for step in 0..<8 {
+            if step > 0 { clock.advance(by: 0.1) }
             controller.muteForDictation(workflowID: workflowID)
         }
 
         XCTAssertEqual(playback.toggleCount, 1)
+        XCTAssertFalse(playback.isOtherProcessPlayingAudio())
+    }
+
+    func testBrieflyReportedPlayingSignalDoesNotUnpauseAlreadyPausedMedia() {
+        let access = makeUncontrollableAccess()
+        let playback = MockMediaPlaybackController()
+        // Media is paused; the OS can still report an active output stream
+        // while the stream tears down. The signal settles below the
+        // confirmation window and must never reach the toggle.
+        playback.otherProcessIsPlaying = true
+        let clock = FakeClock()
+        let controller = makeController(access: access, playback: playback, clock: clock)
+        let workflowID = UUID()
+
+        controller.prepareForDictation(workflowID: workflowID)
+        controller.muteForDictation(workflowID: workflowID)
+
+        playback.otherProcessIsPlaying = false
+        clock.advance(by: SystemAudioOutputController.playbackConfirmationDelay * 2)
+        controller.muteForDictation(workflowID: workflowID)
+
+        XCTAssertEqual(playback.toggleCount, 0)
+        controller.restoreAfterDictation(workflowID: workflowID)
+        XCTAssertEqual(playback.toggleCount, 0)
         XCTAssertFalse(playback.isOtherProcessPlayingAudio())
     }
 
@@ -236,10 +277,13 @@ final class SystemAudioOutputControllerTests: XCTestCase {
         let access = makeUncontrollableAccess()
         let playback = MockMediaPlaybackController()
         playback.otherProcessIsPlaying = true
-        let controller = makeController(access: access, playback: playback)
+        let clock = FakeClock()
+        let controller = makeController(access: access, playback: playback, clock: clock)
         let workflowID = UUID()
 
         controller.prepareForDictation(workflowID: workflowID)
+        controller.muteForDictation(workflowID: workflowID)
+        clock.advance(by: SystemAudioOutputController.playbackConfirmationDelay + 0.1)
         controller.muteForDictation(workflowID: workflowID)
         controller.restoreImmediately()
 

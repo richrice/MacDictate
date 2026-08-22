@@ -68,7 +68,7 @@ enum AudioRecorderError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .permissionDenied: "Microphone access is required to record dictation."
+        case .permissionDenied: "Microphone access is denied. Enable it in System Settings → Privacy & Security → Microphone, then try again."
         case .noInputDevice: "No microphone input device is available."
         case .alreadyRecording: "A recording is already in progress."
         case .notRecording: "There is no active recording."

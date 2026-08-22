@@ -6,11 +6,15 @@ final class CredentialSettingsModel: ObservableObject {
     @Published var enteredKey = ""
     @Published private(set) var isConfigured = false
     @Published private(set) var statusMessage = ""
+    @Published private(set) var isVerifying = false
+    @Published private(set) var verification: APIKeyVerification?
 
     private let store: SecureCredentialStore
+    private let verifier: OpenAIKeyVerifier
 
-    init(store: SecureCredentialStore) {
+    init(store: SecureCredentialStore, verifier: OpenAIKeyVerifier = OpenAIKeyVerifier()) {
         self.store = store
+        self.verifier = verifier
         refresh()
     }
 
@@ -34,6 +38,7 @@ final class CredentialSettingsModel: ObservableObject {
             try store.save(trimmed)
             enteredKey = ""
             isConfigured = true
+            verification = nil
             statusMessage = "API key saved securely in Keychain."
         } catch {
             enteredKey = ""
@@ -46,10 +51,40 @@ final class CredentialSettingsModel: ObservableObject {
             try store.delete()
             enteredKey = ""
             isConfigured = false
+            verification = nil
             statusMessage = "API key deleted from Keychain."
         } catch {
             statusMessage = error.localizedDescription
         }
+    }
+
+    /// Verifies the typed key before saving, or the stored key when the field
+    /// is empty, against a cheap authenticated endpoint.
+    func verify() {
+        guard !isVerifying else { return }
+        let candidate = enteredKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let keyToCheck: String?
+        if candidate.isEmpty {
+            keyToCheck = try? store.load()
+        } else {
+            keyToCheck = candidate
+        }
+        guard let keyToCheck, !keyToCheck.isEmpty else {
+            verification = .couldNotVerify("Enter a key first.")
+            return
+        }
+        isVerifying = true
+        verification = nil
+        Task { [weak self] in
+            guard let self else { return }
+            let outcome = await verifier.verify(keyToCheck)
+            isVerifying = false
+            verification = outcome
+        }
+    }
+
+    var canVerify: Bool {
+        !isVerifying && (!enteredKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isConfigured)
     }
 }
 
@@ -122,7 +157,7 @@ struct SettingsView: View {
                 Toggle("Play subtle feedback sounds", isOn: $settings.playSounds)
                 Toggle("Mute system audio until text is delivered", isOn: $settings.muteSystemAudioDuringDictation)
                 Toggle("Automatically insert transcription", isOn: $settings.automaticallyInsert)
-                Toggle("Leave transcription on clipboard", isOn: $settings.copyToClipboard)
+                Toggle("Keep a copy on the clipboard", isOn: $settings.copyToClipboard)
             }
             Section("Recording") {
                 Picker("Input device", selection: Binding(
@@ -217,10 +252,17 @@ struct SettingsView: View {
                 HStack {
                     Button(credentials.isConfigured ? "Replace Key" : "Save Key") { credentials.save() }
                         .disabled(credentials.enteredKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button(credentials.isVerifying ? "Verifying…" : "Verify") { credentials.verify() }
+                        .disabled(!credentials.canVerify)
                     Button("Delete Key", role: .destructive) { credentials.delete() }
                         .disabled(!credentials.isConfigured)
                     Spacer()
                     Text(credentials.statusMessage).font(.caption).foregroundStyle(.secondary)
+                }
+                if let verification = credentials.verification {
+                    Text(verificationMessage(for: verification))
+                        .font(.caption)
+                        .foregroundStyle(verificationColor(for: verification))
                 }
                 Text("The key is stored only in macOS Keychain and is never placed in preferences or diagnostics.")
                     .font(.caption)
@@ -294,6 +336,22 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func verificationMessage(for outcome: APIKeyVerification) -> String {
+        switch outcome {
+        case .valid: "Verified — the key was accepted by OpenAI."
+        case let .invalid(detail): "Rejected — \(detail)"
+        case let .couldNotVerify(detail): "Could not verify — \(detail)"
+        }
+    }
+
+    private func verificationColor(for outcome: APIKeyVerification) -> Color {
+        switch outcome {
+        case .valid: .green
+        case .invalid: .red
+        case .couldNotVerify: .orange
+        }
     }
 
     @ViewBuilder

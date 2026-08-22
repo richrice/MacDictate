@@ -239,3 +239,30 @@ Record:
 4. Turn the setting back on, begin dictating while audio plays, quit MacDictate mid-recording, and verify the prior output state is restored.
 
 Expected: normal recording completion and app termination restore the prior output state. A hard crash while recording may leave output muted (or, on devices without a mute control, at zero volume); recover with the keyboard mute key or by raising the output volume.
+
+5. Pause a YouTube video or music playback, wait five seconds, then dictate on an output route without volume control (an HDMI display). Verify the paused media stays paused during and after the dictation.
+6. On the same route, play media continuously, dictate, and verify playback pauses shortly into the recording (about half a second) and resumes on delivery.
+
+Expected: the pause fallback only fires when playback is genuinely sustained; teardown lag after pausing or short UI sounds must never toggle media back on.
+
+## 20. First-run welcome window
+
+1. Delete preferences (`defaults delete com.macdictate.app`), remove the Keychain key if present, relaunch, and verify the welcome window appears with three steps: API key, microphone access, optional accessibility access.
+2. Click **Get Started** without completing setup and verify the window closes and does not reappear on relaunch.
+3. Delete preferences again and remove the Keychain key if present, relaunch, complete only the API key step in the welcome window, and verify a dictation works end to end.
+4. With preferences deleted but a working Keychain key still present, relaunch and verify the welcome window does not appear for the upgrading user.
+4. While the welcome window is open, verify the hotkey footnote shows the active shortcut, and that a deliberately conflicted shortcut (register another tool on Option-Space) turns the footnote into an orange conflict warning.
+
+## 21. Hotkey conflict visibility
+
+1. Register another tool on ⌥Space (for example, a launcher binding), launch MacDictate, and verify the menu-bar icon shows a warning glyph and the menu status line reads **Shortcut unavailable — choose another in Settings…** while idle.
+2. Open Settings → Hotkey, choose an unconflicted preset, and verify the menu-bar icon returns to the waveform and the status line returns to **Ready**.
+
+## 22. Settings polish checks
+
+1. Enter an invalid API key in Settings → OpenAI, click **Verify**, and verify a red rejection appears before saving. Enter a valid key and verify a green confirmation.
+2. With accessibility denied, click **Request Access**, dismiss the system prompt, click it again, and verify System Settings opens instead of nothing happening.
+3. Tap the shortcut for under 250 ms and verify the HUD reads **Pressed too briefly — hold while speaking.**
+4. Deny microphone permission, attempt a dictation, and verify the error names System Settings → Privacy & Security → Microphone.
+5. Trigger any failure and verify the HUD shows the full-details hint line pointing at Copy Last Error Details.
+6. On first recording after enabling **Mute system audio until text is delivered**, verify the one-time muted note appears in the recording HUD and never again afterwards.

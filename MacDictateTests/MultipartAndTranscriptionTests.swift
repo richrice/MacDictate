@@ -224,6 +224,27 @@ final class MultipartAndTranscriptionTests: XCTestCase {
         XCTAssertEqual(OpenAITranscriptionService.parseRetryDelay(header: nil, fallbackNanoseconds: fallback), fallback)
     }
 
+    func testAPIKeyVerificationClassification() {
+        XCTAssertEqual(OpenAIKeyVerifier.evaluate(statusCode: 200), .valid)
+        XCTAssertEqual(OpenAIKeyVerifier.evaluate(statusCode: 204), .valid)
+        XCTAssertEqual(
+            OpenAIKeyVerifier.evaluate(statusCode: 401),
+            .invalid("OpenAI rejected this key (HTTP 401).")
+        )
+        XCTAssertEqual(
+            OpenAIKeyVerifier.evaluate(statusCode: 403),
+            .invalid("OpenAI rejected this key (HTTP 403).")
+        )
+        XCTAssertEqual(
+            OpenAIKeyVerifier.evaluate(statusCode: 500),
+            .couldNotVerify("OpenAI responded with HTTP 500.")
+        )
+        XCTAssertEqual(
+            OpenAIKeyVerifier.evaluate(statusCode: 429),
+            .couldNotVerify("OpenAI responded with HTTP 429.")
+        )
+    }
+
     func testAuthenticationFailureIsNotRetried() async throws {
         let counter = LockedCounter()
         MockURLProtocol.handler = { request in

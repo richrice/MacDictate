@@ -73,20 +73,22 @@ The app version comes from the tag (the `MARKETING_VERSION` in `project.yml` is 
 
 ## First-time setup
 
+On the first launch MacDictate opens a welcome window with a three-step checklist: add your OpenAI API key, allow microphone access, and optionally allow accessibility access for automatic insertion. Clicking **Get Started** dismisses it; everything below is also reachable later from the menu bar.
+
 1. Run MacDictate. It is an accessory application: look for the waveform icon in the menu bar rather than the Dock.
 2. Choose **Settings…** from the menu-bar menu.
-3. In **OpenAI**, enter the API key and choose **Save Key**. MacDictate stores it only as a generic password in macOS Keychain.
+3. In **OpenAI**, enter the API key and choose **Save Key**. Use **Verify** to check a typed or stored key against OpenAI before relying on it. MacDictate stores it only as a generic password in macOS Keychain.
 4. In **Permissions**, request Microphone access.
 5. Grant Accessibility access when automatic insertion is first used, or open **System Settings → Privacy & Security → Accessibility** from MacDictate.
 6. Focus an editable control, hold Option-Space for at least 250 ms, speak, and release.
 
-The default model is `gpt-4o-transcribe`. `gpt-4o-mini-transcribe` is available in the OpenAI settings. Language can be English (`en`) or Automatic. The editable developer-vocabulary prompt is context supplied to the model; it does not guarantee spelling.
+The default model is `gpt-4o-transcribe`. `gpt-4o-mini-transcribe` is available in the OpenAI settings. Language defaults to English with Automatic plus many other languages available. The editable developer-vocabulary prompt is context supplied to the model; it does not guarantee spelling.
 
 ## How it works
 
-The explicit workflow states are `idle`, `preparing`, `recording`, `transcribing`, `inserting`, `completed`, `cancelled`, and `failed`. A second recording cannot start while transcription or insertion is active, but pressing the shortcut during the brief completion or error display starts a new dictation immediately. Errors stay on screen for three seconds; other terminal states clear after about a second. The menu can also start a recording; **Stop and Transcribe** finishes a menu-started recording deliberately.
+The explicit workflow states are `idle`, `preparing`, `recording`, `transcribing`, `inserting`, `completed`, `cancelled`, and `failed`. A second recording cannot start while transcription or insertion is active, but pressing the shortcut during the brief completion or error display starts a new dictation immediately. Errors stay on screen for four seconds with a hint pointing at **Copy Last Error Details**; other terminal states clear after about two seconds, and a press shorter than 250 ms explains itself instead of just reporting "Cancelled". The menu can also start a recording; **Stop and Transcribe** finishes a menu-started recording deliberately.
 
-- A Carbon global hotkey provides both key-down and key-up events and consumes the shortcut before the foreground app receives it. Auto-repeat is ignored. Settings provides several modifier/Space alternatives and reports registration conflicts.
+- A Carbon global hotkey provides both key-down and key-up events and consumes the shortcut before the foreground app receives it. Auto-repeat is ignored. Settings provides several modifier/Space alternatives and reports registration conflicts; a conflict also shows a warning glyph in the menu bar and a status line while idle.
 - AVAudioEngine captures the input chosen in MacDictate, using its persistent Core Audio device ID without changing the system-wide input. The previous MacDictate input is remembered and used if the active microphone disconnects. AVAudioConverter writes mono 16 kHz, 16-bit linear PCM in a temporary WAV file. A five-minute ceiling keeps the largest default upload near 9.6 MB before WAV overhead.
 - URLSession posts binary-safe multipart form data to `https://api.openai.com/v1/audio/transcriptions`. HTTP 429 and transient 5xx responses receive at most one delayed retry, honoring a numeric `Retry-After` header up to five seconds; authentication and other permanent 4xx failures are not retried.
 - The app first tries the Accessibility selected-text attribute, then verifies that the exact expected value remains present rather than trusting the setter's return code. If that control rejects direct insertion, MacDictate sends Unicode keyboard events directly to the captured application and applies the same verification.
@@ -110,9 +112,9 @@ MacDictate never synthesizes Return or Enter.
 
 ## Settings
 
-- **General:** launch at login, HUD, sounds, app-local microphone choice, muting until delivery, automatic insertion, optional persistent transcript copy, and recording limit.
+- **General:** launch at login, HUD, sounds, app-local microphone choice, muting until delivery (routes without volume control fall back to pausing playback, and only once playback is clearly sustained), automatic insertion, optional persistent transcript copy, and recording limit.
 - **Hotkey:** modifier/Space presets, default restoration, and live registration/conflict status.
-- **OpenAI:** save/replace/delete the Keychain credential, model, language, context prompt, and prompt reset.
+- **OpenAI:** save/replace/delete the Keychain credential, key verification, model, language, context prompt, and prompt reset.
 - **Permissions:** live Microphone and Accessibility states with links to the correct System Settings panes.
 - **Diagnostics:** version/build, redacted diagnostics, unified-log folder, and content-free debug metadata logging.
 
@@ -142,7 +144,7 @@ open DerivedData/Build/Products/Debug/MacDictate.app
 
 ### Option-Space does nothing
 
-Open **Settings → Hotkey**. If a conflict is shown, choose another preset. Some keyboard managers, launchers, and input methods reserve Option-Space.
+Check the menu bar first: a warning glyph with a **Shortcut unavailable — choose another in Settings…** status line means another tool owns the shortcut. Open **Settings → Hotkey** and choose another preset. Some keyboard managers, launchers, and input methods reserve Option-Space.
 
 ### Microphone access is denied
 
@@ -150,7 +152,7 @@ Use the menu's **Open Microphone Settings**, enable MacDictate, quit it, and reo
 
 ### Text is copied but not inserted
 
-Enable MacDictate in **System Settings → Privacy & Security → Accessibility**, then relaunch it. Copy-only mode is intentional when permission is denied. If the HUD says **Insertion unconfirmed**, MacDictate attempted automatic insertion but could not verify the focused control changed, so it deliberately did not claim success or risk a duplicate fallback. The prior clipboard is preserved unless **Leave transcription on clipboard** is enabled.
+Enable MacDictate in **System Settings → Privacy & Security → Accessibility**, then relaunch it. Copy-only mode is intentional when permission is denied. If the HUD says **Insertion unconfirmed**, MacDictate attempted automatic insertion but could not verify the focused control changed, so it deliberately did not claim success or risk a duplicate fallback. The prior clipboard is preserved unless **Keep a copy on the clipboard** is enabled.
 
 ### The old clipboard was not restored
 
@@ -162,7 +164,7 @@ MacDictate restores only if its temporary transcript is still the current pasteb
 - Quota/billing errors: check the OpenAI project's billing and limits.
 - HTTP 429: MacDictate retries once, then reports rate limiting.
 - DNS, TLS, or offline failures: restore network access and try a new dictation.
-- Presses shorter than 250 ms are cancelled without an API request. Silent recordings and empty transcription responses end with a quiet "No speech detected" message rather than an error.
+- Presses shorter than 250 ms are cancelled without an API request, with a HUD hint to hold while speaking. Silent recordings and empty transcription responses end with a quiet "No speech detected" message rather than an error.
 
 The menu exposes **Copy Last Error Details** after an error. The copied detail is redacted.
 

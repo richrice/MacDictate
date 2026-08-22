@@ -71,6 +71,11 @@ final class AccessibilityPermissionManager: ObservableObject, AccessibilityPermi
             hasPromptedThisLaunch = true
             let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
             _ = AXIsProcessTrustedWithOptions(options)
+        } else {
+            // The one-shot system prompt was already shown this launch. If the
+            // user missed or dismissed it, another click would do nothing
+            // visible; open the correct System Settings pane instead.
+            openSettings()
         }
         refresh()
         return status == .granted

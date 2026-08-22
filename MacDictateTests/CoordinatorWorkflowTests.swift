@@ -280,7 +280,10 @@ final class CoordinatorWorkflowTests: XCTestCase {
         }
         coordinator.finishDictation()
 
-        XCTAssertEqual(stateMachine.state, .cancelled(message: nil))
+        XCTAssertEqual(
+            stateMachine.state,
+            .cancelled(message: "Pressed too briefly — hold while speaking.")
+        )
         XCTAssertEqual(transcription.calls, 0)
         XCTAssertEqual(recorder.cancelCount, 1)
         XCTAssertGreaterThanOrEqual(audioOutputController.muteCount, 1)

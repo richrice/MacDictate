@@ -23,6 +23,7 @@
 		41B56FF8932020628870B6A0 /* MultipartAndTranscriptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A29F3A54D22BEFEEDB1469E /* MultipartAndTranscriptionTests.swift */; };
 		4B8770661F2399F4736D2412 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA66AF8B5D028F384900315E /* SettingsView.swift */; };
 		4E631438D18188CFA77B420F /* CoordinatorWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B5A8BB43E85D857A1B0DF74 /* CoordinatorWorkflowTests.swift */; };
+		5675B484A6095FCAECEB2EE0 /* SettingsStoreFlagTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3494E9672DFCA65AFF580EB /* SettingsStoreFlagTests.swift */; };
 		7DCA304DFE1CC1A9FC705128 /* DuplicateInstanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE3222425FA59F7CE7FB0CC3 /* DuplicateInstanceTests.swift */; };
 		868043B0A73AB2CE5781F6DD /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F815C5A9419693A807248C6B /* AudioRecorder.swift */; };
 		86E3818D25681404F153B4BA /* StorageInsertionAndPrivacyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED6EE8861F18DA90EDA0F3B /* StorageInsertionAndPrivacyTests.swift */; };
@@ -32,6 +33,7 @@
 		B5588633C4FD297F17B9F6B4 /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 11732ED3FADCCF3EFCA53AB3 /* AudioToolbox.framework */; };
 		B5D999A035A560FED223C80B /* HUDControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A59268A231522568B1F751EE /* HUDControllerTests.swift */; };
 		B5E4F870B7A448609BA950BC /* StateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 858782A062F50E08FA10011D /* StateMachineTests.swift */; };
+		BFC3471B1C440D98BED34315 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF2B0A3C702D817BC615F8BA /* WelcomeView.swift */; };
 		C4796C5B028FD0D316DDAE39 /* GlobalHotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74DD84626FEBAF7EF02266E7 /* GlobalHotkeyManager.swift */; };
 		D225FC388642DD50B5ED277E /* TranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D49EEF1F33C3EBE0CCFAAF69 /* TranscriptionService.swift */; };
 		D48DB8E9479DA76237D16FD5 /* AppCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 599BA326BCA87CC57105F001 /* AppCoordinator.swift */; };
@@ -85,9 +87,11 @@
 		BC68CEF538135058270CAAA6 /* HotkeyPresetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyPresetTests.swift; sourceTree = "<group>"; };
 		CD9A0D7169D0D9C3BBB31B66 /* AppLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLogger.swift; sourceTree = "<group>"; };
 		CE3222425FA59F7CE7FB0CC3 /* DuplicateInstanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuplicateInstanceTests.swift; sourceTree = "<group>"; };
+		CF2B0A3C702D817BC615F8BA /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
 		D49EEF1F33C3EBE0CCFAAF69 /* TranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionService.swift; sourceTree = "<group>"; };
 		D63BC4748092AD419F94090C /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		D68115C40CED9D973B791C6F /* MacDictateApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacDictateApp.swift; sourceTree = "<group>"; };
+		E3494E9672DFCA65AFF580EB /* SettingsStoreFlagTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStoreFlagTests.swift; sourceTree = "<group>"; };
 		EA66AF8B5D028F384900315E /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		F815C5A9419693A807248C6B /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
 		F8738C80AC0A5463A8B1D134 /* Credentials.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Credentials.swift; sourceTree = "<group>"; };
@@ -142,6 +146,7 @@
 				163134A363DB1F77398F7CF3 /* SystemAudioOutputController.swift */,
 				AAEEAAC2C41334FC8B59E1A5 /* TextInsertionService.swift */,
 				D49EEF1F33C3EBE0CCFAAF69 /* TranscriptionService.swift */,
+				CF2B0A3C702D817BC615F8BA /* WelcomeView.swift */,
 			);
 			path = MacDictate;
 			sourceTree = "<group>";
@@ -178,6 +183,7 @@
 				BC68CEF538135058270CAAA6 /* HotkeyPresetTests.swift */,
 				A59268A231522568B1F751EE /* HUDControllerTests.swift */,
 				0A29F3A54D22BEFEEDB1469E /* MultipartAndTranscriptionTests.swift */,
+				E3494E9672DFCA65AFF580EB /* SettingsStoreFlagTests.swift */,
 				858782A062F50E08FA10011D /* StateMachineTests.swift */,
 				3ED6EE8861F18DA90EDA0F3B /* StorageInsertionAndPrivacyTests.swift */,
 				76D44FE36740D48CB5BCB85F /* SystemAudioOutputControllerTests.swift */,
@@ -274,6 +280,7 @@
 				B5D999A035A560FED223C80B /* HUDControllerTests.swift in Sources */,
 				26A9868A831420F7E2851948 /* HotkeyPresetTests.swift in Sources */,
 				41B56FF8932020628870B6A0 /* MultipartAndTranscriptionTests.swift in Sources */,
+				5675B484A6095FCAECEB2EE0 /* SettingsStoreFlagTests.swift in Sources */,
 				B5E4F870B7A448609BA950BC /* StateMachineTests.swift in Sources */,
 				86E3818D25681404F153B4BA /* StorageInsertionAndPrivacyTests.swift in Sources */,
 				EA025E821CF4092926953E16 /* SystemAudioOutputControllerTests.swift in Sources */,
@@ -303,6 +310,7 @@
 				F8A8E25B8C4677AA5A866396 /* SystemAudioOutputController.swift in Sources */,
 				1C41924C86E382E37C7DCDAB /* TextInsertionService.swift in Sources */,
 				D225FC388642DD50B5ED277E /* TranscriptionService.swift in Sources */,
+				BFC3471B1C440D98BED34315 /* WelcomeView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -11,6 +11,7 @@ private final class NonActivatingPanel: NSPanel {
 private struct HUDView: View {
     let phase: DictationPhase
     let audioRecorder: AudioRecording
+    var showsMuteNote: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -67,20 +68,32 @@ private struct HUDView: View {
                 .lineLimit(1)
         case .recording:
             TimelineView(.periodic(from: .now, by: 0.1)) { _ in
-                HStack(spacing: 8) {
-                    Text("Mic: \(audioRecorder.currentInputDeviceName)")
-                        .lineLimit(1)
-                    let level = audioRecorder.inputLevel
-                    ProgressView(value: Double(level))
-                        .progressViewStyle(.linear)
-                        .tint(level > 0.05 ? .green : .secondary)
-                        .frame(width: 90)
-                        .accessibilityLabel("Microphone input level")
-                        .accessibilityValue("\(Int(level * 100)) percent")
+                VStack(alignment: .leading, spacing: 3) {
+                    if showsMuteNote {
+                        Text("System audio muted until your text is delivered")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    HStack(spacing: 8) {
+                        Text("Mic: \(audioRecorder.currentInputDeviceName)")
+                            .lineLimit(1)
+                        let level = audioRecorder.inputLevel
+                        ProgressView(value: Double(level))
+                            .progressViewStyle(.linear)
+                            .tint(level > 0.05 ? .green : .secondary)
+                            .frame(width: 90)
+                            .accessibilityLabel("Microphone input level")
+                            .accessibilityValue("\(Int(level * 100)) percent")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
+            }
+        case .failed:
+            Text("Full details: Copy Last Error Details in the menu bar menu")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            }
+                .lineLimit(1)
         default:
             EmptyView()
         }
@@ -145,14 +158,25 @@ final class HUDController: NSObject, NSWindowDelegate {
             panel.orderOut(nil)
             return
         }
-        hostingController.rootView = HUDView(phase: phase, audioRecorder: audioRecorder)
+        var showMuteNote = false
+        if case .recording = phase,
+           settings.muteSystemAudioDuringDictation,
+           !settings.hasSeenMuteNotice {
+            settings.hasSeenMuteNotice = true
+            showMuteNote = true
+        }
+        hostingController.rootView = HUDView(
+            phase: phase,
+            audioRecorder: audioRecorder,
+            showsMuteNote: showMuteNote
+        )
         positionPanel()
         panel.orderFrontRegardless()
 
         let delay: UInt64?
         switch phase {
-        case .completed, .cancelled: delay = 1_200_000_000
-        case .failed: delay = 3_000_000_000
+        case .completed, .cancelled: delay = 1_800_000_000
+        case .failed: delay = 4_200_000_000
         default: delay = nil
         }
         if let delay {

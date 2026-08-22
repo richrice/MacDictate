@@ -16,11 +16,46 @@ enum TranscriptionModel: String, CaseIterable, Codable, Identifiable, Sendable {
 
 enum TranscriptionLanguage: String, CaseIterable, Codable, Identifiable, Sendable {
     case automatic
-    case english
+    case english = "en"
+    case spanish = "es"
+    case french = "fr"
+    case german = "de"
+    case italian = "it"
+    case portuguese = "pt"
+    case dutch = "nl"
+    case polish = "pl"
+    case turkish = "tr"
+    case russian = "ru"
+    case ukrainian = "uk"
+    case arabic = "ar"
+    case hindi = "hi"
+    case chinese = "zh"
+    case japanese = "ja"
+    case korean = "ko"
 
     var id: String { rawValue }
-    var displayName: String { self == .english ? "English" : "Automatic" }
-    var apiValue: String? { self == .english ? "en" : nil }
+    var displayName: String {
+        switch self {
+        case .automatic: "Automatic"
+        case .english: "English"
+        case .spanish: "Spanish"
+        case .french: "French"
+        case .german: "German"
+        case .italian: "Italian"
+        case .portuguese: "Portuguese"
+        case .dutch: "Dutch"
+        case .polish: "Polish"
+        case .turkish: "Turkish"
+        case .russian: "Russian"
+        case .ukrainian: "Ukrainian"
+        case .arabic: "Arabic"
+        case .hindi: "Hindi"
+        case .chinese: "Chinese"
+        case .japanese: "Japanese"
+        case .korean: "Korean"
+        }
+    }
+    var apiValue: String? { self == .automatic ? nil : rawValue }
 }
 
 struct HotkeyPresetGroup: Identifiable, Sendable {
@@ -102,6 +137,8 @@ final class SettingsStore: ObservableObject {
         static let prompt = "transcriptionPrompt"
         static let hotkey = "hotkeyShortcut"
         static let debugLogging = "debugLogging"
+        static let hasCompletedSetup = "hasCompletedSetup"
+        static let hasSeenMuteNotice = "hasSeenMuteNotice"
     }
 
     private let defaults: UserDefaults
@@ -119,6 +156,8 @@ final class SettingsStore: ObservableObject {
     @Published var transcriptionPrompt: String { didSet { defaults.set(transcriptionPrompt, forKey: Key.prompt) } }
     @Published var hotkey: HotkeyShortcut { didSet { persistHotkey() } }
     @Published var debugLogging: Bool { didSet { defaults.set(debugLogging, forKey: Key.debugLogging) } }
+    @Published var hasCompletedSetup: Bool { didSet { defaults.set(hasCompletedSetup, forKey: Key.hasCompletedSetup) } }
+    @Published var hasSeenMuteNotice: Bool { didSet { defaults.set(hasSeenMuteNotice, forKey: Key.hasSeenMuteNotice) } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -159,6 +198,8 @@ final class SettingsStore: ObservableObject {
         language = TranscriptionLanguage(rawValue: defaults.string(forKey: Key.language) ?? "") ?? .english
         transcriptionPrompt = defaults.string(forKey: Key.prompt) ?? Self.defaultPrompt
         debugLogging = defaults.bool(forKey: Key.debugLogging)
+        hasCompletedSetup = defaults.bool(forKey: Key.hasCompletedSetup)
+        hasSeenMuteNotice = defaults.bool(forKey: Key.hasSeenMuteNotice)
 
         if let data = defaults.data(forKey: Key.hotkey),
            let decoded = try? JSONDecoder().decode(HotkeyShortcut.self, from: data) {
