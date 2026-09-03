@@ -10,6 +10,7 @@ private final class MockAudioRecorder: AudioRecording {
     var isReadyForRecording = true
     var onInterruption: ((String) -> Void)?
     var onInputDeviceFallback: ((AudioInputSelection) -> Void)?
+    var onInputDeviceReconnection: ((AudioInputSelection) -> Void)?
     private(set) var selectedInputDevice: AudioInputSelection = .systemDefault
 
     var peakAmplitude: Float = 0.5

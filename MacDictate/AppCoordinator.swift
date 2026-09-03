@@ -113,16 +113,6 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
             showWelcomeWindow()
         }
 
-        do {
-            try audioRecorder.selectInputDevice(settings.audioInputSelection)
-        } catch {
-            AppLogger.audio.error(
-                "Saved input device is currently unavailable: \(error.localizedDescription, privacy: .public)"
-            )
-        }
-
-        hotkeyManager.onKeyDown = { [weak self] in self?.beginDictation() }
-        hotkeyManager.onKeyUp = { [weak self] in self?.finishDictation() }
         audioRecorder.onInterruption = { [weak self] reason in
             self?.fail(AudioRecorderError.engineFailed(reason))
         }
@@ -133,6 +123,22 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
             self.settings.audioInputSelection = selection
             self.refreshMicrophoneMenu()
         }
+        audioRecorder.onInputDeviceReconnection = { [weak self] selection in
+            guard let self else { return }
+            self.settings.audioInputSelection = selection
+            self.refreshMicrophoneMenu()
+        }
+
+        do {
+            try audioRecorder.selectInputDevice(settings.audioInputSelection)
+        } catch {
+            AppLogger.audio.error(
+                "Saved input device is currently unavailable: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+
+        hotkeyManager.onKeyDown = { [weak self] in self?.beginDictation() }
+        hotkeyManager.onKeyUp = { [weak self] in self?.finishDictation() }
         hotkeyManager.register(settings.hotkey)
 
         hotkeyCancellable = settings.$hotkey

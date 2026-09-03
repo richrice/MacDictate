@@ -24,6 +24,7 @@
 		4B8770661F2399F4736D2412 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA66AF8B5D028F384900315E /* SettingsView.swift */; };
 		4E631438D18188CFA77B420F /* CoordinatorWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B5A8BB43E85D857A1B0DF74 /* CoordinatorWorkflowTests.swift */; };
 		5675B484A6095FCAECEB2EE0 /* SettingsStoreFlagTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3494E9672DFCA65AFF580EB /* SettingsStoreFlagTests.swift */; };
+		71D840DA7FCFC04EC918D97C /* AudioInputDeviceReconnectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FB446491ECFCA1B501876E0 /* AudioInputDeviceReconnectorTests.swift */; };
 		7DCA304DFE1CC1A9FC705128 /* DuplicateInstanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE3222425FA59F7CE7FB0CC3 /* DuplicateInstanceTests.swift */; };
 		868043B0A73AB2CE5781F6DD /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F815C5A9419693A807248C6B /* AudioRecorder.swift */; };
 		86E3818D25681404F153B4BA /* StorageInsertionAndPrivacyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED6EE8861F18DA90EDA0F3B /* StorageInsertionAndPrivacyTests.swift */; };
@@ -70,6 +71,7 @@
 		539B60411C699464F786290C /* MacDictate.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MacDictate.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		599BA326BCA87CC57105F001 /* AppCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCoordinator.swift; sourceTree = "<group>"; };
 		5B4CC1BB9284C5D9EBA68554 /* Carbon.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Carbon.framework; path = System/Library/Frameworks/Carbon.framework; sourceTree = SDKROOT; };
+		6FB446491ECFCA1B501876E0 /* AudioInputDeviceReconnectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioInputDeviceReconnectorTests.swift; sourceTree = "<group>"; };
 		7454CBBD68793DE172E24A67 /* MacDictate.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MacDictate.entitlements; sourceTree = "<group>"; };
 		74DD84626FEBAF7EF02266E7 /* GlobalHotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalHotkeyManager.swift; sourceTree = "<group>"; };
 		75FF2CDAF9E829A436A61AFB /* MediaPlaybackController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaPlaybackController.swift; sourceTree = "<group>"; };
@@ -177,6 +179,7 @@
 		D112BAAA234D3CC3183D78FE /* MacDictateTests */ = {
 			isa = PBXGroup;
 			children = (
+				6FB446491ECFCA1B501876E0 /* AudioInputDeviceReconnectorTests.swift */,
 				46012278DED84F435E5FF482 /* AudioTapIsolationTests.swift */,
 				0B5A8BB43E85D857A1B0DF74 /* CoordinatorWorkflowTests.swift */,
 				CE3222425FA59F7CE7FB0CC3 /* DuplicateInstanceTests.swift */,
@@ -274,6 +277,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				71D840DA7FCFC04EC918D97C /* AudioInputDeviceReconnectorTests.swift in Sources */,
 				027ECA044347A86A9058F8E3 /* AudioTapIsolationTests.swift in Sources */,
 				4E631438D18188CFA77B420F /* CoordinatorWorkflowTests.swift in Sources */,
 				7DCA304DFE1CC1A9FC705128 /* DuplicateInstanceTests.swift in Sources */,

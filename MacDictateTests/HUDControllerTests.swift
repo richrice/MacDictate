@@ -10,6 +10,7 @@ private final class StubAudioRecorder: AudioRecording {
     var isReadyForRecording = true
     var onInterruption: ((String) -> Void)?
     var onInputDeviceFallback: ((AudioInputSelection) -> Void)?
+    var onInputDeviceReconnection: ((AudioInputSelection) -> Void)?
 
     func selectInputDevice(_ selection: AudioInputSelection) throws {}
     func prepare() async throws {}

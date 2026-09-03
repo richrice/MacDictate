@@ -47,6 +47,22 @@ enum AudioInputSelection: Codable, Hashable, Sendable {
     }
 }
 
+enum AudioInputDeviceReconnector {
+    static func replacement(
+        for selection: AudioInputSelection,
+        among availableDevices: [AudioInputDevice]
+    ) -> AudioInputSelection? {
+        guard case let .device(savedUID, savedName) = selection,
+              !availableDevices.contains(where: { $0.uid == savedUID }) else {
+            return nil
+        }
+
+        let matchingDevices = availableDevices.filter { $0.name == savedName }
+        guard matchingDevices.count == 1 else { return nil }
+        return matchingDevices[0].selection
+    }
+}
+
 enum AudioTapBlockFactory {
     nonisolated static func make(
         handler: @escaping @Sendable (AVAudioPCMBuffer) -> Void
@@ -89,6 +105,7 @@ protocol AudioRecording: AnyObject {
     var isReadyForRecording: Bool { get }
     var onInterruption: ((String) -> Void)? { get set }
     var onInputDeviceFallback: ((AudioInputSelection) -> Void)? { get set }
+    var onInputDeviceReconnection: ((AudioInputSelection) -> Void)? { get set }
     func selectInputDevice(_ selection: AudioInputSelection) throws
     func prepare() async throws
     func start() throws
@@ -376,6 +393,7 @@ final class AudioRecorder: AudioRecording {
 
     var onInterruption: ((String) -> Void)?
     var onInputDeviceFallback: ((AudioInputSelection) -> Void)?
+    var onInputDeviceReconnection: ((AudioInputSelection) -> Void)?
 
     var currentInputDeviceName: String {
         if let activeInputDeviceID {
@@ -385,8 +403,10 @@ final class AudioRecorder: AudioRecording {
         case .systemDefault:
             return CoreAudioInputDevices.defaultDeviceID
                 .flatMap(CoreAudioInputDevices.name(for:)) ?? "No input device"
-        case let .device(_, name):
-            return name
+        case let .device(uid, name):
+            return CoreAudioInputDevices.available.contains(where: { $0.uid == uid })
+                ? name
+                : "\(name) (Unavailable)"
         }
     }
 
@@ -415,11 +435,16 @@ final class AudioRecorder: AudioRecording {
 
     func selectInputDevice(_ selection: AudioInputSelection) throws {
         guard writer == nil else { throw AudioRecorderError.alreadyRecording }
-        _ = try resolveInputDeviceID(for: selection)
-        if selection != inputSelection {
-            fallbackInputSelection = inputSelection
-            inputSelection = selection
+
+        if selection == inputSelection {
+            reconnectSelectedInputIfAvailable()
+            _ = try resolveInputDeviceID(for: inputSelection)
+            return
         }
+
+        _ = try resolveInputDeviceID(for: selection)
+        fallbackInputSelection = inputSelection
+        inputSelection = selection
     }
 
     /// AVAudioEngine stops itself when the input configuration changes, and the
@@ -545,6 +570,7 @@ final class AudioRecorder: AudioRecording {
     }
 
     private func applyInputSelectionWithFallback() throws {
+        reconnectSelectedInputIfAvailable()
         do {
             try applyInputSelection(inputSelection)
         } catch let primaryError as AudioRecorderError {
@@ -560,20 +586,40 @@ final class AudioRecorder: AudioRecording {
                 throw primaryError
             }
 
+            let resolvedFallback = AudioInputDeviceReconnector.replacement(
+                for: fallbackInputSelection,
+                among: CoreAudioInputDevices.available
+            ) ?? fallbackInputSelection
             do {
-                try applyInputSelection(fallbackInputSelection)
+                try applyInputSelection(resolvedFallback)
             } catch {
                 throw primaryError
             }
 
             let unavailableSelection = inputSelection
-            inputSelection = fallbackInputSelection
+            inputSelection = resolvedFallback
             self.fallbackInputSelection = unavailableSelection
             AppLogger.audio.info(
                 "Input device disconnected; fell back to \(self.currentInputDeviceName, privacy: .public)"
             )
             onInputDeviceFallback?(inputSelection)
         }
+    }
+
+    private func reconnectSelectedInputIfAvailable() {
+        guard let replacement = AudioInputDeviceReconnector.replacement(
+            for: inputSelection,
+            among: CoreAudioInputDevices.available
+        ) else {
+            return
+        }
+
+        let previousName = inputSelection.displayName
+        inputSelection = replacement
+        AppLogger.audio.info(
+            "Reconnected \(previousName, privacy: .public) with its current Core Audio device ID"
+        )
+        onInputDeviceReconnection?(replacement)
     }
 
     private func applyInputSelection(_ selection: AudioInputSelection) throws {
