@@ -180,8 +180,8 @@ Expected: no overlap, crash, duplicate transcript, retained temporary file, or r
 
 1. Connect Bluetooth headphones and play music in Chrome before launching MacDictate.
 2. Launch MacDictate and leave it idle. Verify playback volume and quality remain unchanged.
-3. Dictate while the music continues. Verify playback stays muted even if the Bluetooth route changes during recording.
-4. Release the shortcut. Verify playback remains muted while the transcription is delivered, then the prior volume returns and playback resumes directly at high quality when the completion message appears.
+3. Dictate while the music continues. Verify playback becomes inaudible without the system mute or volume changing, even if the Bluetooth route changes during recording.
+4. Release the shortcut. Verify playback remains inaudible while the transcription is delivered, then becomes audible at its unchanged volume and current playback position when the completion message appears.
 5. Set Maximum duration to 10 seconds.
 6. Hold the shortcut longer than 10 seconds and verify recording automatically stops and transcribes once.
 7. Hold for one second in silence and verify a quiet "No speech detected" cancellation (no error sound, no Copy Last Error Details entry) with no API request where the audio threshold is met.
@@ -193,7 +193,7 @@ Expected: no overlap, crash, duplicate transcript, retained temporary file, or r
 13. Repeat the disconnect with both the selected and previous inputs unavailable. Verify an interruption/device error appears—never a silent switch to an arbitrary device or a hallucinated transcript.
 14. With Bluetooth headphones connected, verify the first dictation after launch succeeds: benign input configuration changes at engine start (for example a hands-free profile switch) must recover silently rather than showing "The microphone could not start."
 
-Expected: MacDictate owns the microphone only while preparing or recording, keeps every transient Bluetooth output route muted until delivery completes, restores all affected routes, and recovers without relaunch.
+Expected: MacDictate owns the microphone only while preparing or recording, keeps other processes inaudible until delivery completes without modifying any output route, and recovers without relaunch.
 
 ## 17. Relaunch and privacy residue
 
@@ -235,16 +235,18 @@ Record:
 ## 19. System audio muting during dictation
 
 1. Play audible system audio, such as a YouTube video, then hold the dictation hotkey and verify the output mutes.
-2. Release the hotkey and verify the exact prior output state is restored. Repeat once with output already muted to verify it remains muted afterward.
+2. While dictating, verify macOS Sound and the keyboard volume indicator retain their exact prior mute and volume values. Release the hotkey and verify audio returns at its current playback position.
 3. Turn off **Mute system audio while dictating**, repeat a dictation while audio plays, and verify the output does not mute.
-4. Turn the setting back on, begin dictating while audio plays, quit MacDictate mid-recording, and verify the prior output state is restored.
+4. Turn the setting back on, begin dictating while audio plays, quit MacDictate mid-recording, and verify audio becomes audible without any mute or volume change.
+5. Repeat the previous step using `kill -9` and verify process termination also makes audio audible again.
 
-Expected: normal recording completion and app termination restore the prior output state. A hard crash while recording may leave output muted (or, on devices without a mute control, at zero volume); recover with the keyboard mute key or by raising the output volume.
+Expected: normal completion, cancellation, graceful termination, and forced termination remove the private Core Audio tap. None changes the output device state or media playback state.
 
-5. Pause a YouTube video or music playback, wait five seconds, then dictate on an output route without volume control (an HDMI display). Verify the paused media stays paused during and after the dictation.
-6. On the same route, play media continuously, dictate, and verify playback pauses shortly into the recording (about half a second) and resumes on delivery.
+6. Pause a YouTube video or music playback, wait five seconds, then dictate on an output route without volume control (an HDMI display). Verify the paused media stays paused during and after the dictation.
+7. On the same route, play media continuously and dictate. Verify it becomes inaudible but continues advancing, then becomes audible at its current position on delivery.
+8. Repeat on built-in speakers, a USB audio device, and Bluetooth headphones where available.
 
-Expected: the pause fallback only fires when playback is genuinely sustained; teardown lag after pausing or short UI sounds must never toggle media back on.
+Expected: every output route behaves consistently. MacDictate never sends a media command and never changes device mute or volume. On macOS 14.0–14.1, the setting safely leaves playback untouched because process taps are unavailable.
 
 ## 20. First-run welcome window
 

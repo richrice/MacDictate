@@ -18,7 +18,6 @@
 		2FC28A48E503EA645B086078 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42DFA35A4304445953E19C80 /* SettingsStore.swift */; };
 		32EA46872A536038C3E5C650 /* PermissionManagers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05F875BAC4152B52F435994D /* PermissionManagers.swift */; };
 		3516EF06E66193C91697FDAE /* CoreAudio.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 14BD9602CD63C5CA7FDD870C /* CoreAudio.framework */; };
-		3716D4E46076DCB8F85E0758 /* MediaPlaybackController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75FF2CDAF9E829A436A61AFB /* MediaPlaybackController.swift */; };
 		390778B7B81457CA4E4D846B /* Carbon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5B4CC1BB9284C5D9EBA68554 /* Carbon.framework */; };
 		41B56FF8932020628870B6A0 /* MultipartAndTranscriptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A29F3A54D22BEFEEDB1469E /* MultipartAndTranscriptionTests.swift */; };
 		4B8770661F2399F4736D2412 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA66AF8B5D028F384900315E /* SettingsView.swift */; };
@@ -74,7 +73,6 @@
 		6FB446491ECFCA1B501876E0 /* AudioInputDeviceReconnectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioInputDeviceReconnectorTests.swift; sourceTree = "<group>"; };
 		7454CBBD68793DE172E24A67 /* MacDictate.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MacDictate.entitlements; sourceTree = "<group>"; };
 		74DD84626FEBAF7EF02266E7 /* GlobalHotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalHotkeyManager.swift; sourceTree = "<group>"; };
-		75FF2CDAF9E829A436A61AFB /* MediaPlaybackController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaPlaybackController.swift; sourceTree = "<group>"; };
 		76D44FE36740D48CB5BCB85F /* SystemAudioOutputControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemAudioOutputControllerTests.swift; sourceTree = "<group>"; };
 		7DA91FFCA893DFC510713B81 /* HUDController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDController.swift; sourceTree = "<group>"; };
 		858782A062F50E08FA10011D /* StateMachineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StateMachineTests.swift; sourceTree = "<group>"; };
@@ -140,7 +138,6 @@
 				9E0E67F26C27978F12EE351A /* LaunchAtLoginManager.swift */,
 				7454CBBD68793DE172E24A67 /* MacDictate.entitlements */,
 				D68115C40CED9D973B791C6F /* MacDictateApp.swift */,
-				75FF2CDAF9E829A436A61AFB /* MediaPlaybackController.swift */,
 				AD9280D83AB953AE5E83E79F /* MultipartFormDataBuilder.swift */,
 				05F875BAC4152B52F435994D /* PermissionManagers.swift */,
 				42DFA35A4304445953E19C80 /* SettingsStore.swift */,
@@ -306,7 +303,6 @@
 				B01BE6AB93DFDCFD059F6E9B /* HUDController.swift in Sources */,
 				DBB2C92B465C4A78654057AE /* LaunchAtLoginManager.swift in Sources */,
 				FCC73F64FAE9B943DFCD8301 /* MacDictateApp.swift in Sources */,
-				3716D4E46076DCB8F85E0758 /* MediaPlaybackController.swift in Sources */,
 				E05EDCFB3912DED95D617B69 /* MultipartFormDataBuilder.swift in Sources */,
 				32EA46872A536038C3E5C650 /* PermissionManagers.swift in Sources */,
 				2FC28A48E503EA645B086078 /* SettingsStore.swift in Sources */,

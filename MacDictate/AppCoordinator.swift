@@ -59,7 +59,6 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
     private var settingsObserver: NSObjectProtocol?
     private var activeWorkflowID: UUID?
     private var workflowTask: Task<Void, Never>?
-    private var muteTask: Task<Void, Never>?
     private var maximumDurationTask: Task<Void, Never>?
     private var resetTask: Task<Void, Never>?
     private var capturedTarget: TargetApplication?
@@ -210,7 +209,12 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         }
         let workflowID = UUID()
         activeWorkflowID = workflowID
-        beginSystemAudioMuting(for: workflowID)
+        do {
+            try beginSystemAudioSilencing(for: workflowID)
+        } catch {
+            fail(error)
+            return
+        }
 
         workflowTask = Task { [weak self] in
             guard let self else { return }
@@ -446,25 +450,9 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         }
     }
 
-    private func beginSystemAudioMuting(for workflowID: UUID) {
+    private func beginSystemAudioSilencing(for workflowID: UUID) throws {
         guard settings.muteSystemAudioDuringDictation else { return }
-        audioOutputController.prepareForDictation(workflowID: workflowID)
-        audioOutputController.muteForDictation(workflowID: workflowID)
-        muteTask?.cancel()
-        muteTask = Task { [weak self] in
-            while !Task.isCancelled, let self {
-                try? await Task.sleep(for: .milliseconds(100))
-                guard !Task.isCancelled else { return }
-                guard self.activeWorkflowID == workflowID else { return }
-                switch self.stateMachine.state {
-                case .preparing, .recording:
-                    break
-                default:
-                    return
-                }
-                self.audioOutputController.muteForDictation(workflowID: workflowID)
-            }
-        }
+        try audioOutputController.silenceForDictation(workflowID: workflowID)
     }
 
     private func fail(_ error: Error) {
@@ -496,8 +484,6 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
     }
 
     private func restoreSystemAudio(for workflowID: UUID) {
-        muteTask?.cancel()
-        muteTask = nil
         audioOutputController.restoreAfterDictation(workflowID: workflowID)
     }
 

@@ -20,7 +20,7 @@ If you prefer to audit what you run—reasonable for an app with microphone and 
 
 ## Requirements
 
-- macOS 14 Sonoma or newer
+- macOS 14 Sonoma or newer (system-audio silencing requires macOS 14.2)
 - Xcode 16 or newer with Command Line Tools selected
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) 2.44 or newer
 - An OpenAI API key with access to the Audio Transcriptions API
@@ -90,6 +90,7 @@ The explicit workflow states are `idle`, `preparing`, `recording`, `transcribing
 
 - A Carbon global hotkey provides both key-down and key-up events and consumes the shortcut before the foreground app receives it. Auto-repeat is ignored. Settings provides several modifier/Space alternatives and reports registration conflicts; a conflict also shows a warning glyph in the menu bar and a status line while idle.
 - AVAudioEngine captures the input chosen in MacDictate, using its persistent Core Audio device ID without changing the system-wide input. If moving a USB microphone changes that ID, MacDictate automatically adopts the new ID when exactly one available input has the saved name. The previous MacDictate input is remembered and used if the active microphone disconnects. AVAudioConverter writes mono 16 kHz, 16-bit linear PCM in a temporary WAV file. A five-minute ceiling keeps the largest default upload near 9.6 MB before WAV overhead.
+- On macOS 14.2 and newer, a private Core Audio process tap silences every other application's output until delivery completes. The tap excludes MacDictate; MacDictate never reads or stores its audio, changes device mute or volume, or sends play/pause commands. Destroying the tap restores output automatically.
 - URLSession posts binary-safe multipart form data to `https://api.openai.com/v1/audio/transcriptions`. HTTP 429 and transient 5xx responses receive at most one delayed retry, honoring a numeric `Retry-After` header up to five seconds; authentication and other permanent 4xx failures are not retried.
 - The app first tries the Accessibility selected-text attribute, then verifies that the exact expected value remains present rather than trusting the setter's return code. If that control rejects direct insertion, MacDictate sends Unicode keyboard events directly to the captured application and applies the same verification.
 - The Codex desktop composer and iTerm2 use paste-first delivery because their editors do not expose a reliably verifiable Accessibility value. Codex uses a focused global Command-V event matching its proven physical-paste path. Other targets use paste only after earlier attempts are observably absent.
@@ -112,7 +113,7 @@ MacDictate never synthesizes Return or Enter.
 
 ## Settings
 
-- **General:** launch at login, HUD, sounds, app-local microphone choice, muting until delivery (routes without volume control fall back to pausing playback, and only once playback is clearly sustained), automatic insertion, optional persistent transcript copy, and recording limit.
+- **General:** launch at login, HUD, sounds, app-local microphone choice, process-level system-audio silencing until delivery, automatic insertion, optional persistent transcript copy, and recording limit.
 - **Hotkey:** modifier/Space presets, default restoration, and live registration/conflict status.
 - **OpenAI:** save/replace/delete the Keychain credential, key verification, model, language, context prompt, and prompt reset.
 - **Permissions:** live Microphone and Accessibility states with links to the correct System Settings panes.

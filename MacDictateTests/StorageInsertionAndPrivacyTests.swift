@@ -356,23 +356,6 @@ final class StorageInsertionAndPrivacyTests: XCTestCase {
         )
     }
 
-    func testCanonicalOutputStateRestoresCurrentRouteLast() {
-        XCTAssertEqual(
-            SystemAudioOutputController.restorationTargets(
-                originalDeviceID: 11,
-                currentDeviceID: 22
-            ),
-            [11, 22]
-        )
-        XCTAssertEqual(
-            SystemAudioOutputController.restorationTargets(
-                originalDeviceID: 11,
-                currentDeviceID: 11
-            ),
-            [11]
-        )
-    }
-
     func testUnicodeEventChunksPreserveCharactersAndRespectNormalLimit() {
         let text = "1234567890123456789é👩🏽‍💻tail"
         let chunks = UnicodeKeyboardTextInserter.chunks(text, maximumUTF16Length: 20)
