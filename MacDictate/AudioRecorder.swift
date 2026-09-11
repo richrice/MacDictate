@@ -63,6 +63,22 @@ enum AudioInputDeviceReconnector {
     }
 }
 
+enum AudioInputFallbackPolicy {
+    static func candidates(
+        after preferred: AudioInputSelection,
+        previous: AudioInputSelection?
+    ) -> [AudioInputSelection] {
+        var candidates: [AudioInputSelection] = []
+        if let previous, previous != preferred {
+            candidates.append(previous)
+        }
+        if preferred != .systemDefault, !candidates.contains(.systemDefault) {
+            candidates.append(.systemDefault)
+        }
+        return candidates
+    }
+}
+
 enum AudioTapBlockFactory {
     nonisolated static func make(
         handler: @escaping @Sendable (AVAudioPCMBuffer) -> Void
@@ -296,7 +312,8 @@ private enum CoreAudioInputDevices {
 
     static func deviceID(forUID uid: String) -> AudioDeviceID? {
         allDeviceIDs().first {
-            stringProperty($0, selector: kAudioDevicePropertyDeviceUID) == uid
+            hasInputStreams($0)
+                && stringProperty($0, selector: kAudioDevicePropertyDeviceUID) == uid
         }
     }
 
@@ -581,28 +598,37 @@ final class AudioRecorder: AudioRecording {
             default:
                 canFallback = false
             }
-            guard canFallback, let fallbackInputSelection,
-                  fallbackInputSelection != inputSelection else {
-                throw primaryError
-            }
-
-            let resolvedFallback = AudioInputDeviceReconnector.replacement(
-                for: fallbackInputSelection,
-                among: CoreAudioInputDevices.available
-            ) ?? fallbackInputSelection
-            do {
-                try applyInputSelection(resolvedFallback)
-            } catch {
+            guard canFallback else {
                 throw primaryError
             }
 
             let unavailableSelection = inputSelection
-            inputSelection = resolvedFallback
-            self.fallbackInputSelection = unavailableSelection
-            AppLogger.audio.info(
-                "Input device disconnected; fell back to \(self.currentInputDeviceName, privacy: .public)"
-            )
-            onInputDeviceFallback?(inputSelection)
+            for fallback in AudioInputFallbackPolicy.candidates(
+                after: unavailableSelection,
+                previous: fallbackInputSelection
+            ) {
+                let resolvedFallback = AudioInputDeviceReconnector.replacement(
+                    for: fallback,
+                    among: CoreAudioInputDevices.available
+                ) ?? fallback
+                guard resolvedFallback != unavailableSelection else { continue }
+                do {
+                    try applyInputSelection(resolvedFallback)
+                } catch is AudioRecorderError {
+                    continue
+                } catch {
+                    throw error
+                }
+
+                inputSelection = resolvedFallback
+                fallbackInputSelection = unavailableSelection
+                AppLogger.audio.info(
+                    "Input device could not be used; fell back to \(self.currentInputDeviceName, privacy: .public)"
+                )
+                onInputDeviceFallback?(inputSelection)
+                return
+            }
+            throw primaryError
         }
     }
 
@@ -672,8 +698,7 @@ final class AudioRecorder: AudioRecording {
             }
             return defaultDeviceID
         case let .device(uid, name):
-            guard let selectedDeviceID = CoreAudioInputDevices.deviceID(forUID: uid),
-                  CoreAudioInputDevices.available.contains(where: { $0.uid == uid }) else {
+            guard let selectedDeviceID = CoreAudioInputDevices.deviceID(forUID: uid) else {
                 throw AudioRecorderError.inputDeviceUnavailable(name)
             }
             return selectedDeviceID

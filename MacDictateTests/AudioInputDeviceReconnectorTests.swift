@@ -51,4 +51,30 @@ final class AudioInputDeviceReconnectorTests: XCTestCase {
             AudioInputDeviceReconnector.replacement(for: .systemDefault, among: [device])
         )
     }
+
+    func testFallbackUsesPreviousDeviceBeforeSystemDefault() {
+        let preferred = AudioInputSelection.device(uid: "usb", name: "USB Microphone")
+        let previous = AudioInputSelection.device(uid: "bluetooth", name: "Headset")
+
+        XCTAssertEqual(
+            AudioInputFallbackPolicy.candidates(after: preferred, previous: previous),
+            [previous, .systemDefault]
+        )
+    }
+
+    func testFallbackDoesNotDuplicateSystemDefault() {
+        let preferred = AudioInputSelection.device(uid: "usb", name: "USB Microphone")
+
+        XCTAssertEqual(
+            AudioInputFallbackPolicy.candidates(after: preferred, previous: .systemDefault),
+            [.systemDefault]
+        )
+    }
+
+    func testSystemDefaultHasNoImplicitFallback() {
+        XCTAssertEqual(
+            AudioInputFallbackPolicy.candidates(after: .systemDefault, previous: nil),
+            []
+        )
+    }
 }
