@@ -28,7 +28,8 @@ enum AppDiagnostics {
         microphone: PermissionStatus,
         accessibility: PermissionStatus,
         hasAPIKey: Bool,
-        hotkeyStatus: HotkeyRegistrationStatus
+        hotkeyStatus: HotkeyRegistrationStatus,
+        extendedKeyboardHotkeyStatus: HotkeyRegistrationStatus
     ) -> String {
         let info = Bundle.main.infoDictionary
         let version = info?["CFBundleShortVersionString"] as? String ?? "unknown"
@@ -43,8 +44,11 @@ enum AppDiagnostics {
             "API key configured: \(hasAPIKey ? "yes" : "no")",
             "Model: \(settings.model.rawValue)",
             "Language: \(settings.language.rawValue)",
-            "Hotkey: \(settings.hotkey.displayName)",
-            "Hotkey registration: \(hotkeyStatus.displayText)",
+            "Laptop hotkey: \(settings.hotkey.displayName)",
+            "Laptop hotkey registration: \(hotkeyStatus.displayText)",
+            "Extended keyboard hotkey enabled: \(settings.extendedKeyboardHotkeyEnabled)",
+            "Extended keyboard hotkey: \(settings.extendedKeyboardHotkey.displayName)",
+            "Extended keyboard hotkey registration: \(extendedKeyboardHotkeyStatus.displayText)",
             "HUD enabled: \(settings.showHUD)",
             "Sounds enabled: \(settings.playSounds)",
             "Automatic insertion: \(settings.automaticallyInsert)",
@@ -67,4 +71,3 @@ enum AppDiagnostics {
         NSWorkspace.shared.open(url)
     }
 }
-

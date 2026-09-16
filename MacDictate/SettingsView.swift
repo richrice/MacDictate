@@ -212,7 +212,7 @@ struct SettingsView: View {
 
     private var hotkeyTab: some View {
         Form {
-            Section("Push to talk") {
+            Section("MacBook keyboard") {
                 LabeledContent("Current shortcut", value: settings.hotkey.displayName)
                 Picker("Change shortcut", selection: $settings.hotkey) {
                     ForEach(HotkeyShortcut.presetGroups) { group in
@@ -226,17 +226,29 @@ struct SettingsView: View {
                 Button("Restore Default (\(HotkeyShortcut.defaultShortcut.displayName))") {
                     settings.restoreDefaultHotkey()
                 }
-                Text("Bare function keys (F13–F19) are reserved system-wide by MacDictate while it is running. These keys are typically available only on full-size or extended external keyboards.")
+            }
+            Section("Extended keyboard") {
+                Toggle("Enable a second shortcut", isOn: $settings.extendedKeyboardHotkeyEnabled)
+                Picker("Shortcut", selection: $settings.extendedKeyboardHotkey) {
+                    ForEach(HotkeyShortcut.extendedKeyboardShortcuts) { shortcut in
+                        Text(shortcut.displayName).tag(shortcut)
+                    }
+                }
+                .disabled(!settings.extendedKeyboardHotkeyEnabled)
+                Text("The laptop shortcut remains available. Right Control is dedicated to dictation while selected, so choose an F-key if you use it in other shortcuts. F13–F15 may map to Print Screen, Scroll Lock, or Pause on some keyboards.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Section("Registration") {
-                HStack(alignment: .firstTextBaseline) {
-                    Image(systemName: hotkeyStatusSymbol)
-                        .foregroundStyle(hotkeyStatusColor)
-                    Text(hotkeyManager.registrationStatus.displayText)
-                }
-                Text("The shortcut is consumed by MacDictate. Key down starts recording and key up transcribes; key repeat cannot start another session.")
+                registrationRow(
+                    label: "Laptop",
+                    status: hotkeyManager.registrationStatus
+                )
+                registrationRow(
+                    label: "Extended keyboard",
+                    status: hotkeyManager.extendedKeyboardRegistrationStatus
+                )
+                Text("Registration detects ordinary shortcuts reserved by other apps. Modifier-only shortcuts and extra actions emitted by keyboard hardware or remapping software cannot be checked for conflicts.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -363,19 +375,30 @@ struct SettingsView: View {
         }
     }
 
-    private var hotkeyStatusSymbol: String {
-        switch hotkeyManager.registrationStatus {
+    private func hotkeyStatusSymbol(for status: HotkeyRegistrationStatus) -> String {
+        switch status {
         case .registered: "checkmark.circle.fill"
         case .conflict, .failed: "exclamationmark.triangle.fill"
         case .notRegistered: "minus.circle"
         }
     }
 
-    private var hotkeyStatusColor: Color {
-        switch hotkeyManager.registrationStatus {
+    private func hotkeyStatusColor(for status: HotkeyRegistrationStatus) -> Color {
+        switch status {
         case .registered: .green
         case .conflict, .failed: .orange
         case .notRegistered: .secondary
+        }
+    }
+
+    private func registrationRow(
+        label: String,
+        status: HotkeyRegistrationStatus
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Image(systemName: hotkeyStatusSymbol(for: status))
+                .foregroundStyle(hotkeyStatusColor(for: status))
+            Text("\(label): \(status.displayText)")
         }
     }
 
@@ -386,7 +409,8 @@ struct SettingsView: View {
             microphone: microphonePermission.status,
             accessibility: accessibilityPermission.status,
             hasAPIKey: credentials.isConfigured,
-            hotkeyStatus: hotkeyManager.registrationStatus
+            hotkeyStatus: hotkeyManager.registrationStatus,
+            extendedKeyboardHotkeyStatus: hotkeyManager.extendedKeyboardRegistrationStatus
         )
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)

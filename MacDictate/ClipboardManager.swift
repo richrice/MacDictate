@@ -79,3 +79,17 @@ final class ClipboardManager: ClipboardManaging {
     }
 }
 
+@MainActor
+final class TranscriptionHistory {
+    static let maximumCount = 5
+
+    private(set) var entries: [String] = []
+
+    func add(_ translation: String) {
+        guard !translation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        entries.insert(translation, at: 0)
+        if entries.count > Self.maximumCount {
+            entries.removeLast()
+        }
+    }
+}

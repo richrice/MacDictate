@@ -90,6 +90,23 @@ struct HotkeyShortcut: Codable, Hashable, Identifiable, Sendable {
         displayName: "⌥ Space"
     )
 
+    static let defaultExtendedKeyboardShortcut = HotkeyShortcut(
+        keyCode: UInt32(kVK_RightControl),
+        carbonModifiers: 0,
+        displayName: "Right Control"
+    )
+
+    static let extendedKeyboardShortcuts: [HotkeyShortcut] = [
+        .defaultExtendedKeyboardShortcut,
+        HotkeyShortcut(keyCode: UInt32(kVK_F13), carbonModifiers: 0, displayName: "F13"),
+        HotkeyShortcut(keyCode: UInt32(kVK_F14), carbonModifiers: 0, displayName: "F14"),
+        HotkeyShortcut(keyCode: UInt32(kVK_F15), carbonModifiers: 0, displayName: "F15"),
+        HotkeyShortcut(keyCode: UInt32(kVK_F16), carbonModifiers: 0, displayName: "F16"),
+        HotkeyShortcut(keyCode: UInt32(kVK_F17), carbonModifiers: 0, displayName: "F17"),
+        HotkeyShortcut(keyCode: UInt32(kVK_F18), carbonModifiers: 0, displayName: "F18"),
+        HotkeyShortcut(keyCode: UInt32(kVK_F19), carbonModifiers: 0, displayName: "F19")
+    ]
+
     static let presetGroups: [HotkeyPresetGroup] = [
         HotkeyPresetGroup(name: "Space", shortcuts: [
             .defaultShortcut,
@@ -100,15 +117,7 @@ struct HotkeyShortcut: Codable, Hashable, Identifiable, Sendable {
             HotkeyShortcut(keyCode: UInt32(kVK_Space), carbonModifiers: UInt32(controlKey | shiftKey), displayName: "⌃⇧ Space"),
             HotkeyShortcut(keyCode: UInt32(kVK_Space), carbonModifiers: UInt32(controlKey | optionKey | cmdKey), displayName: "⌃⌥⌘ Space")
         ]),
-        HotkeyPresetGroup(name: "Function keys", shortcuts: [
-            HotkeyShortcut(keyCode: UInt32(kVK_F13), carbonModifiers: 0, displayName: "F13"),
-            HotkeyShortcut(keyCode: UInt32(kVK_F14), carbonModifiers: 0, displayName: "F14"),
-            HotkeyShortcut(keyCode: UInt32(kVK_F15), carbonModifiers: 0, displayName: "F15"),
-            HotkeyShortcut(keyCode: UInt32(kVK_F16), carbonModifiers: 0, displayName: "F16"),
-            HotkeyShortcut(keyCode: UInt32(kVK_F17), carbonModifiers: 0, displayName: "F17"),
-            HotkeyShortcut(keyCode: UInt32(kVK_F18), carbonModifiers: 0, displayName: "F18"),
-            HotkeyShortcut(keyCode: UInt32(kVK_F19), carbonModifiers: 0, displayName: "F19")
-        ]),
+        HotkeyPresetGroup(name: "External keyboard keys", shortcuts: extendedKeyboardShortcuts),
         HotkeyPresetGroup(name: "Other keys", shortcuts: [
             HotkeyShortcut(keyCode: UInt32(kVK_ANSI_D), carbonModifiers: UInt32(controlKey | optionKey), displayName: "⌃⌥ D"),
             HotkeyShortcut(keyCode: UInt32(kVK_ANSI_M), carbonModifiers: UInt32(controlKey | optionKey), displayName: "⌃⌥ M"),
@@ -136,6 +145,8 @@ final class SettingsStore: ObservableObject {
         static let language = "transcriptionLanguage"
         static let prompt = "transcriptionPrompt"
         static let hotkey = "hotkeyShortcut"
+        static let extendedKeyboardHotkeyEnabled = "extendedKeyboardHotkeyEnabled"
+        static let extendedKeyboardHotkey = "extendedKeyboardHotkeyShortcut"
         static let debugLogging = "debugLogging"
         static let hasCompletedSetup = "hasCompletedSetup"
         static let hasSeenMuteNotice = "hasSeenMuteNotice"
@@ -155,6 +166,8 @@ final class SettingsStore: ObservableObject {
     @Published var language: TranscriptionLanguage { didSet { defaults.set(language.rawValue, forKey: Key.language) } }
     @Published var transcriptionPrompt: String { didSet { defaults.set(transcriptionPrompt, forKey: Key.prompt) } }
     @Published var hotkey: HotkeyShortcut { didSet { persistHotkey() } }
+    @Published var extendedKeyboardHotkeyEnabled: Bool { didSet { defaults.set(extendedKeyboardHotkeyEnabled, forKey: Key.extendedKeyboardHotkeyEnabled) } }
+    @Published var extendedKeyboardHotkey: HotkeyShortcut { didSet { persistExtendedKeyboardHotkey() } }
     @Published var debugLogging: Bool { didSet { defaults.set(debugLogging, forKey: Key.debugLogging) } }
     @Published var hasCompletedSetup: Bool { didSet { defaults.set(hasCompletedSetup, forKey: Key.hasCompletedSetup) } }
     @Published var hasSeenMuteNotice: Bool { didSet { defaults.set(hasSeenMuteNotice, forKey: Key.hasSeenMuteNotice) } }
@@ -171,6 +184,7 @@ final class SettingsStore: ObservableObject {
             Key.model: TranscriptionModel.full.rawValue,
             Key.language: TranscriptionLanguage.english.rawValue,
             Key.prompt: Self.defaultPrompt,
+            Key.extendedKeyboardHotkeyEnabled: true,
             Key.debugLogging: false
         ])
 
@@ -209,6 +223,15 @@ final class SettingsStore: ObservableObject {
         } else {
             hotkey = .defaultShortcut
         }
+        extendedKeyboardHotkeyEnabled = defaults.bool(forKey: Key.extendedKeyboardHotkeyEnabled)
+        if let data = defaults.data(forKey: Key.extendedKeyboardHotkey),
+           let decoded = try? JSONDecoder().decode(HotkeyShortcut.self, from: data) {
+            extendedKeyboardHotkey = HotkeyShortcut.extendedKeyboardShortcuts.first {
+                $0.id == decoded.id
+            } ?? .defaultExtendedKeyboardShortcut
+        } else {
+            extendedKeyboardHotkey = .defaultExtendedKeyboardShortcut
+        }
     }
 
     func resetPrompt() {
@@ -222,6 +245,11 @@ final class SettingsStore: ObservableObject {
     private func persistHotkey() {
         guard let data = try? JSONEncoder().encode(hotkey) else { return }
         defaults.set(data, forKey: Key.hotkey)
+    }
+
+    private func persistExtendedKeyboardHotkey() {
+        guard let data = try? JSONEncoder().encode(extendedKeyboardHotkey) else { return }
+        defaults.set(data, forKey: Key.extendedKeyboardHotkey)
     }
 
     private func persistAudioInputSelection() {

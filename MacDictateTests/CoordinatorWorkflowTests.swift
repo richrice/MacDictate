@@ -17,6 +17,7 @@ private final class MockAudioRecorder: AudioRecording {
     var rmsAmplitude: Float = 0.1
     var duration: TimeInterval = 1.0
     var onPrepare: (() -> Void)?
+    var onStart: (() throws -> Void)?
     var onStop: (() -> Void)?
     var onCancel: (() -> Void)?
     var suspendNextPrepare = false
@@ -49,7 +50,7 @@ private final class MockAudioRecorder: AudioRecording {
         suspendedPrepareContinuation = nil
         continuation?.resume()
     }
-    func start() throws {}
+    func start() throws { try onStart?() }
     func stop() throws -> RecordedAudio {
         onStop?()
         return RecordedAudio(
@@ -238,6 +239,19 @@ final class CoordinatorWorkflowTests: XCTestCase {
         XCTAssertNil(coordinator.lastErrorDetails)
         XCTAssertEqual(audioOutputController.silenceCount, 1)
         XCTAssertFalse(audioOutputController.isCurrentlySilenced)
+        XCTAssertEqual(coordinator.transcriptionHistory.entries, ["hello world"])
+    }
+
+    func testTranslationHistoryKeepsFiveMostRecentEntries() {
+        let history = TranscriptionHistory()
+        for index in 1...6 {
+            history.add("translation \(index)")
+        }
+
+        XCTAssertEqual(
+            history.entries,
+            ["translation 6", "translation 5", "translation 4", "translation 3", "translation 2"]
+        )
     }
 
     func testUnverifiedAutomaticInsertionIsNotReportedAsSuccessful() async throws {
@@ -345,18 +359,32 @@ final class CoordinatorWorkflowTests: XCTestCase {
         XCTAssertFalse(audioOutputController.isCurrentlySilenced)
     }
 
-    func testSilencesOutputBeforePreparingInput() async throws {
+    func testStartsInputBeforeSilencingOutput() async throws {
         var events: [String] = []
         audioOutputController.onSilence = { events.append("silence output") }
         recorder.onPrepare = { events.append("prepare input") }
+        recorder.onStart = { events.append("start input") }
 
         coordinator.beginDictation()
         await waitFor("recording should start") {
             if case .recording = self.stateMachine.state { true } else { false }
         }
 
-        XCTAssertEqual(events, ["silence output", "prepare input"])
+        XCTAssertEqual(events, ["prepare input", "start input", "silence output"])
         coordinator.cancelActive()
+    }
+
+    func testInputStartFailureDoesNotSilenceOutput() async {
+        recorder.onStart = { throw AudioRecorderError.engineFailed("Test start failure") }
+
+        coordinator.beginDictation()
+        await waitFor("workflow should fail") {
+            if case .failed = self.stateMachine.state { true } else { false }
+        }
+
+        XCTAssertEqual(stateMachine.state, .failed(message: AudioRecorderError.engineFailed("Test start failure").localizedDescription))
+        XCTAssertEqual(audioOutputController.silenceCount, 0)
+        XCTAssertEqual(recorder.cancelCount, 1)
     }
 
     func testPressDuringTerminalCooldownStartsNewDictation() async throws {
@@ -445,6 +473,21 @@ final class CoordinatorWorkflowTests: XCTestCase {
         XCTAssertEqual(cleaner.deleted.count, 1)
     }
 
+    func testHotkeyDuringTranscriptionCancelsStalledRequest() async throws {
+        transcription.behavior = .hangUntilCancelled
+        try await holdThroughMinimumPress()
+        coordinator.finishDictation()
+        await waitFor("transcription should start") { self.stateMachine.state == .transcribing }
+
+        coordinator.beginDictation()
+        try await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertEqual(stateMachine.state, .cancelled(message: nil))
+        XCTAssertEqual(recorder.prepareCount, 1, "Cancellation must not start another recording")
+        XCTAssertFalse(audioOutputController.isCurrentlySilenced)
+        XCTAssertEqual(cleaner.deleted.count, 1)
+    }
+
     func testSilentRecordingIsBenignCancel() async throws {
         recorder.peakAmplitude = 0
         try await holdThroughMinimumPress()
@@ -506,10 +549,13 @@ final class CoordinatorWorkflowTests: XCTestCase {
         XCTAssertFalse(audioOutputController.isCurrentlySilenced)
     }
 
-    func testSilencingFailureStopsBeforePreparingMicrophone() {
+    func testSilencingFailureCancelsPreparedMicrophone() async {
         audioOutputController.silenceError = SystemAudioSilencingError.tapCreationFailed(-1)
 
         coordinator.beginDictation()
+        await waitFor("workflow should fail") {
+            if case .failed = self.stateMachine.state { true } else { false }
+        }
 
         guard case let .failed(message) = stateMachine.state else {
             XCTFail("Expected failure, got \(stateMachine.state)")
@@ -519,7 +565,8 @@ final class CoordinatorWorkflowTests: XCTestCase {
             message,
             SystemAudioSilencingError.tapCreationFailed(-1).localizedDescription
         )
-        XCTAssertEqual(recorder.prepareCount, 0)
+        XCTAssertEqual(recorder.prepareCount, 1)
+        XCTAssertEqual(recorder.cancelCount, 1)
         XCTAssertFalse(audioOutputController.isCurrentlySilenced)
     }
 

@@ -1,4 +1,5 @@
 import Carbon.HIToolbox
+import AppKit
 import Foundation
 
 enum HotkeyRegistrationStatus: Equatable, Sendable {
@@ -15,15 +16,30 @@ enum HotkeyRegistrationStatus: Equatable, Sendable {
         case let .failed(detail): "Registration failed: \(detail)"
         }
     }
+
+    var isProblem: Bool {
+        switch self {
+        case .conflict, .failed: true
+        case .notRegistered, .registered: false
+        }
+    }
+}
+
+enum HotkeySlot: UInt32, Hashable, Sendable {
+    case laptop = 1
+    case extendedKeyboard = 2
 }
 
 @MainActor
 final class GlobalHotkeyManager: ObservableObject {
     @Published private(set) var registrationStatus: HotkeyRegistrationStatus = .notRegistered
+    @Published private(set) var extendedKeyboardRegistrationStatus: HotkeyRegistrationStatus = .notRegistered
 
-    /// The combination Carbon currently owns. This differs from the user's latest pick when
-    /// that pick failed to register and the previous shortcut was put back.
-    private(set) var activeShortcut: HotkeyShortcut?
+    /// The combinations Carbon currently owns. These differ from the user's latest picks when
+    /// a replacement failed to register and the previous shortcut was put back.
+    private var activeShortcuts: [HotkeySlot: HotkeyShortcut] = [:]
+    var activeShortcut: HotkeyShortcut? { activeShortcuts[.laptop] }
+    var activeExtendedKeyboardShortcut: HotkeyShortcut? { activeShortcuts[.extendedKeyboard] }
 
     var onKeyDown: (() -> Void)?
     var onKeyUp: (() -> Void)?
@@ -31,9 +47,13 @@ final class GlobalHotkeyManager: ObservableObject {
     // nonisolated(unsafe): only mutated on the main actor; deinit needs to read
     // them for teardown, which is safe because the object is uniquely referenced.
     private nonisolated(unsafe) var eventHandler: EventHandlerRef?
-    private nonisolated(unsafe) var hotkeyRef: EventHotKeyRef?
-    private var isPressed = false
-    private let hotkeyID = EventHotKeyID(signature: OSType(0x4D_44_49_43), id: 1) // MDIC
+    private nonisolated(unsafe) var hotkeyRefs: [HotkeySlot: EventHotKeyRef] = [:]
+    private nonisolated(unsafe) var globalModifierMonitor: Any?
+    private nonisolated(unsafe) var localModifierMonitor: Any?
+    private var modifierMonitorSlot: HotkeySlot?
+    private var rightControlIsDown = false
+    private var pressedSlot: HotkeySlot?
+    private let hotkeySignature = OSType(0x4D_44_49_43) // MDIC
 
     init() {
         var eventTypes = [
@@ -51,13 +71,16 @@ final class GlobalHotkeyManager: ObservableObject {
         )
         if status != noErr {
             registrationStatus = .failed("Carbon event handler error \(status)")
+            extendedKeyboardRegistrationStatus = .failed("Carbon event handler error \(status)")
         }
     }
 
     deinit {
         // The Carbon handler holds an unretained pointer to self; tear both
         // registrations down so it can never fire against a freed instance.
-        if let hotkeyRef { UnregisterEventHotKey(hotkeyRef) }
+        for hotkeyRef in hotkeyRefs.values { UnregisterEventHotKey(hotkeyRef) }
+        if let globalModifierMonitor { NSEvent.removeMonitor(globalModifierMonitor) }
+        if let localModifierMonitor { NSEvent.removeMonitor(localModifierMonitor) }
         if let eventHandler { RemoveEventHandler(eventHandler) }
     }
 
@@ -66,61 +89,158 @@ final class GlobalHotkeyManager: ObservableObject {
     /// working hotkey at all; the previous shortcut is restored instead.
     @discardableResult
     func register(_ shortcut: HotkeyShortcut) -> Bool {
-        let previous = activeShortcut
-        unregister()
+        register(shortcut, for: .laptop)
+    }
 
-        let status = installHotkey(shortcut)
+    @discardableResult
+    func register(_ shortcut: HotkeyShortcut, for slot: HotkeySlot) -> Bool {
+        let previous = activeShortcuts[slot]
+        unregister(slot)
+
+        let status = installHotkey(shortcut, for: slot)
         if status == noErr {
-            activeShortcut = shortcut
-            registrationStatus = .registered(shortcut.displayName)
-            AppLogger.hotkey.info("Global hotkey registered")
+            activeShortcuts[slot] = shortcut
+            setStatus(.registered(shortcut.displayName), for: slot)
+            AppLogger.hotkey.info("Global hotkey registered: \(shortcut.displayName, privacy: .public)")
             return true
         }
 
         if status == OSStatus(eventHotKeyExistsErr) {
-            registrationStatus = .conflict(shortcut.displayName)
-            AppLogger.hotkey.error("Global hotkey conflicts with another application")
+            setStatus(.conflict(shortcut.displayName), for: slot)
+            AppLogger.hotkey.error("Global hotkey conflicts with another registered shortcut")
         } else {
-            registrationStatus = .failed("Carbon error \(status)")
+            setStatus(.failed("Carbon error \(status)"), for: slot)
             AppLogger.hotkey.error("Global hotkey registration failed with status \(status)")
         }
 
-        if let previous, previous != shortcut, installHotkey(previous) == noErr {
-            activeShortcut = previous
+        if let previous, previous != shortcut, installHotkey(previous, for: slot) == noErr {
+            activeShortcuts[slot] = previous
             AppLogger.hotkey.info("Kept the previously registered global hotkey")
         }
         return false
     }
 
     func unregister() {
-        if let hotkeyRef { UnregisterEventHotKey(hotkeyRef) }
-        hotkeyRef = nil
-        activeShortcut = nil
-        isPressed = false
-        if case .registered = registrationStatus { registrationStatus = .notRegistered }
+        unregister(.laptop)
+        unregister(.extendedKeyboard)
     }
 
-    private func installHotkey(_ shortcut: HotkeyShortcut) -> OSStatus {
-        RegisterEventHotKey(
+    func unregister(_ slot: HotkeySlot) {
+        if let hotkeyRef = hotkeyRefs.removeValue(forKey: slot) {
+            UnregisterEventHotKey(hotkeyRef)
+        }
+        if modifierMonitorSlot == slot {
+            removeModifierMonitors()
+        }
+        activeShortcuts[slot] = nil
+        if pressedSlot == slot { pressedSlot = nil }
+        setStatus(.notRegistered, for: slot)
+    }
+
+    func status(for slot: HotkeySlot) -> HotkeyRegistrationStatus {
+        switch slot {
+        case .laptop: registrationStatus
+        case .extendedKeyboard: extendedKeyboardRegistrationStatus
+        }
+    }
+
+    func activeShortcut(for slot: HotkeySlot) -> HotkeyShortcut? {
+        activeShortcuts[slot]
+    }
+
+    private func installHotkey(_ shortcut: HotkeyShortcut, for slot: HotkeySlot) -> OSStatus {
+        if shortcut == .defaultExtendedKeyboardShortcut {
+            return installRightControlMonitor(for: slot)
+        }
+        var hotkeyRef: EventHotKeyRef?
+        let status = RegisterEventHotKey(
             shortcut.keyCode,
             shortcut.carbonModifiers,
-            hotkeyID,
+            EventHotKeyID(signature: hotkeySignature, id: slot.rawValue),
             GetApplicationEventTarget(),
             0,
             &hotkeyRef
         )
+        if status == noErr, let hotkeyRef {
+            hotkeyRefs[slot] = hotkeyRef
+        }
+        return status
+    }
+
+    private func installRightControlMonitor(for slot: HotkeySlot) -> OSStatus {
+        guard modifierMonitorSlot == nil else { return OSStatus(eventHotKeyExistsErr) }
+
+        globalModifierMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) {
+            [weak self] event in
+            MainActor.assumeIsolated {
+                self?.handleRightControlEvent(event)
+            }
+        }
+        localModifierMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) {
+            [weak self] event in
+            MainActor.assumeIsolated {
+                self?.handleRightControlEvent(event)
+            }
+            return event
+        }
+        guard globalModifierMonitor != nil, localModifierMonitor != nil else {
+            removeModifierMonitors()
+            return OSStatus(eventInternalErr)
+        }
+        modifierMonitorSlot = slot
+        return noErr
+    }
+
+    private func removeModifierMonitors() {
+        if let globalModifierMonitor { NSEvent.removeMonitor(globalModifierMonitor) }
+        if let localModifierMonitor { NSEvent.removeMonitor(localModifierMonitor) }
+        globalModifierMonitor = nil
+        localModifierMonitor = nil
+        modifierMonitorSlot = nil
+        rightControlIsDown = false
+    }
+
+    private func handleRightControlEvent(_ event: NSEvent) {
+        guard event.keyCode == UInt16(kVK_RightControl),
+              let slot = modifierMonitorSlot,
+              activeShortcuts[slot] != nil else { return }
+
+        // NSEvent retains device-specific modifier bits. This mask distinguishes the right
+        // Control key even if the left Control key is held at the same time.
+        let isDown = event.modifierFlags.rawValue & 0x0000_2000 != 0
+        guard isDown != rightControlIsDown else { return }
+        rightControlIsDown = isDown
+
+        if isDown {
+            guard pressedSlot == nil else { return }
+            pressedSlot = slot
+            onKeyDown?()
+        } else {
+            guard pressedSlot == slot else { return }
+            pressedSlot = nil
+            onKeyUp?()
+        }
+    }
+
+    private func setStatus(_ status: HotkeyRegistrationStatus, for slot: HotkeySlot) {
+        switch slot {
+        case .laptop: registrationStatus = status
+        case .extendedKeyboard: extendedKeyboardRegistrationStatus = status
+        }
     }
 
     private func handle(kind: UInt32, identifier: UInt32) -> OSStatus {
-        guard identifier == hotkeyID.id else { return OSStatus(eventNotHandledErr) }
+        guard let slot = HotkeySlot(rawValue: identifier), activeShortcuts[slot] != nil else {
+            return OSStatus(eventNotHandledErr)
+        }
         switch kind {
         case UInt32(kEventHotKeyPressed):
-            guard !isPressed else { return noErr }
-            isPressed = true
+            guard pressedSlot == nil else { return noErr }
+            pressedSlot = slot
             onKeyDown?()
         case UInt32(kEventHotKeyReleased):
-            guard isPressed else { return noErr }
-            isPressed = false
+            guard pressedSlot == slot else { return noErr }
+            pressedSlot = nil
             onKeyUp?()
         default:
             return OSStatus(eventNotHandledErr)

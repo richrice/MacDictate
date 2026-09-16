@@ -107,17 +107,26 @@ struct WelcomeView: View {
 
     private var hotkeyFootnote: some View {
         Group {
-            switch hotkeyManager.registrationStatus {
-            case .conflict, .failed:
+            if hotkeyManager.registrationStatus.isProblem {
                 Label(
                     "The \(settings.hotkey.displayName) shortcut could not be registered — choose another under Settings → Hotkey.",
                     systemImage: "exclamationmark.triangle.fill"
                 )
                 .font(.callout)
                 .foregroundStyle(.orange)
-            default:
+            } else if settings.extendedKeyboardHotkeyEnabled,
+                      hotkeyManager.extendedKeyboardRegistrationStatus.isProblem {
                 Label(
-                    "To dictate: focus any app, hold \(settings.hotkey.displayName), speak, then release.",
+                    "The extended-keyboard shortcut \(settings.extendedKeyboardHotkey.displayName) is already in use. The laptop shortcut still works.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.callout)
+                .foregroundStyle(.orange)
+            } else {
+                Label(
+                    settings.extendedKeyboardHotkeyEnabled
+                        ? "To dictate: hold \(settings.hotkey.displayName) or \(settings.extendedKeyboardHotkey.displayName), speak, then release."
+                        : "To dictate: hold \(settings.hotkey.displayName), speak, then release.",
                     systemImage: "keyboard"
                 )
                 .font(.callout)

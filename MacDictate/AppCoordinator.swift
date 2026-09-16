@@ -39,6 +39,7 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
     private let insertionService: TextInsertionService
     private let audioOutputController: SystemAudioOutputControlling
     private let fileCleaner: TemporaryFileCleaning
+    let transcriptionHistory: TranscriptionHistory
 
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
@@ -46,6 +47,8 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
     private var stopMenuItem: NSMenuItem?
     private var cancelMenuItem: NSMenuItem?
     private var copyErrorMenuItem: NSMenuItem?
+    private var recentTranslationsMenuItem: NSMenuItem?
+    private var recentTranslationsMenu: NSMenu?
     private var microphoneMenuItem: NSMenuItem?
     private var microphoneMenu: NSMenu?
     private var microphoneMenuSelections: [Int: AudioInputSelection] = [:]
@@ -54,6 +57,7 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
     private var hudController: HUDController?
     private var stateCancellable: AnyCancellable?
     private var hotkeyCancellable: AnyCancellable?
+    private var extendedHotkeyCancellable: AnyCancellable?
     private var hotkeyStatusCancellable: AnyCancellable?
     private var workspaceObserver: NSObjectProtocol?
     private var settingsObserver: NSObjectProtocol?
@@ -78,7 +82,8 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         credentialStore: SecureCredentialStore,
         insertionService: TextInsertionService,
         audioOutputController: SystemAudioOutputControlling,
-        fileCleaner: TemporaryFileCleaning = TemporaryFileCleaner()
+        fileCleaner: TemporaryFileCleaning = TemporaryFileCleaner(),
+        transcriptionHistory: TranscriptionHistory = TranscriptionHistory()
     ) {
         self.settings = settings
         self.stateMachine = stateMachine
@@ -92,6 +97,7 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         self.insertionService = insertionService
         self.audioOutputController = audioOutputController
         self.fileCleaner = fileCleaner
+        self.transcriptionHistory = transcriptionHistory
         super.init()
     }
 
@@ -138,7 +144,10 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
 
         hotkeyManager.onKeyDown = { [weak self] in self?.beginDictation() }
         hotkeyManager.onKeyUp = { [weak self] in self?.finishDictation() }
-        hotkeyManager.register(settings.hotkey)
+        hotkeyManager.register(settings.hotkey, for: .laptop)
+        if settings.extendedKeyboardHotkeyEnabled {
+            hotkeyManager.register(settings.extendedKeyboardHotkey, for: .extendedKeyboard)
+        }
 
         hotkeyCancellable = settings.$hotkey
             .dropFirst()
@@ -146,12 +155,22 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
             .sink { [weak self] shortcut in
                 MainActor.assumeIsolated { self?.applyHotkey(shortcut) }
             }
+        extendedHotkeyCancellable = settings.$extendedKeyboardHotkeyEnabled
+            .combineLatest(settings.$extendedKeyboardHotkey)
+            .dropFirst()
+            .removeDuplicates { lhs, rhs in lhs.0 == rhs.0 && lhs.1 == rhs.1 }
+            .sink { [weak self] isEnabled, shortcut in
+                MainActor.assumeIsolated {
+                    self?.applyExtendedKeyboardHotkey(shortcut, isEnabled: isEnabled)
+                }
+            }
         stateCancellable = stateMachine.$state.sink { [weak self] state in
             MainActor.assumeIsolated { self?.updateMenu(for: state) }
         }
         hotkeyStatusCancellable = hotkeyManager.$registrationStatus
+            .combineLatest(hotkeyManager.$extendedKeyboardRegistrationStatus)
             .dropFirst()
-            .removeDuplicates()
+            .removeDuplicates { lhs, rhs in lhs.0 == rhs.0 && lhs.1 == rhs.1 }
             .sink { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
@@ -172,8 +191,12 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
     }
 
     private func applyHotkey(_ shortcut: HotkeyShortcut) {
-        if hotkeyManager.register(shortcut) { return }
-        guard let restored = hotkeyManager.activeShortcut else { return }
+        // A failed replacement restores the previous Carbon registration and then
+        // rolls the setting back asynchronously. Keep the conflict visible instead
+        // of re-registering that restored shortcut and overwriting the error status.
+        if hotkeyManager.activeShortcut(for: .laptop) == shortcut { return }
+        if hotkeyManager.register(shortcut, for: .laptop) { return }
+        guard let restored = hotkeyManager.activeShortcut(for: .laptop) else { return }
         // $hotkey publishes before the property is assigned, so reverting here would be
         // overwritten by the in-flight assignment — and then persisted by its didSet.
         Task { @MainActor [weak self] in
@@ -181,7 +204,32 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         }
     }
 
+    private func applyExtendedKeyboardHotkey(
+        _ shortcut: HotkeyShortcut,
+        isEnabled: Bool
+    ) {
+        guard isEnabled else {
+            hotkeyManager.unregister(.extendedKeyboard)
+            return
+        }
+        if hotkeyManager.activeShortcut(for: .extendedKeyboard) == shortcut { return }
+        if hotkeyManager.register(shortcut, for: .extendedKeyboard) { return }
+        guard let restored = hotkeyManager.activeShortcut(for: .extendedKeyboard) else { return }
+        // As above, defer the persisted rollback until the published assignment completes.
+        Task { @MainActor [weak self] in
+            self?.settings.extendedKeyboardHotkey = restored
+        }
+    }
+
     func beginDictation() {
+        switch stateMachine.state {
+        case .transcribing, .inserting:
+            AppLogger.hotkey.info("Cancelling the active delivery workflow from the hotkey")
+            cancelActive()
+            return
+        default:
+            break
+        }
         guard audioRecorder.isReadyForRecording else {
             AppLogger.hotkey.info("Ignoring hotkey while the previous microphone session finishes closing")
             return
@@ -209,12 +257,6 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         }
         let workflowID = UUID()
         activeWorkflowID = workflowID
-        do {
-            try beginSystemAudioSilencing(for: workflowID)
-        } catch {
-            fail(error)
-            return
-        }
 
         workflowTask = Task { [weak self] in
             guard let self else { return }
@@ -223,6 +265,9 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
                 try Task.checkCancellation()
                 guard self.activeWorkflowID == workflowID else { return }
                 try self.audioRecorder.start()
+                // Starting the engine also queries the input-device graph.
+                // Finish those queries before a process mute tap changes it.
+                try self.beginSystemAudioSilencing(for: workflowID)
                 try self.stateMachine.transition(to: .recording(startedAt: Date()))
                 self.playSound(named: "Pop")
                 self.scheduleMaximumDuration(for: workflowID)
@@ -372,6 +417,9 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
                 cancelBenignly(message: "No speech detected")
                 return
             }
+
+            transcriptionHistory.add(transcript)
+            refreshRecentTranslationsMenu()
 
             var completionMessage = "Transcription complete"
             var insertionOutcome: TextInsertionOutcome?
@@ -564,6 +612,15 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         copyError.target = self
         copyError.isHidden = true
         menu.addItem(copyError)
+
+        let recentTranslationsItem = NSMenuItem(
+            title: "Recent Transcriptions",
+            action: nil,
+            keyEquivalent: ""
+        )
+        let recentTranslationsMenu = NSMenu(title: "Recent Transcriptions")
+        recentTranslationsItem.submenu = recentTranslationsMenu
+        menu.addItem(recentTranslationsItem)
         menu.addItem(.separator())
 
         let microphonePickerItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
@@ -593,9 +650,12 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         stopMenuItem = stop
         cancelMenuItem = cancel
         copyErrorMenuItem = copyError
+        recentTranslationsMenuItem = recentTranslationsItem
+        self.recentTranslationsMenu = recentTranslationsMenu
         self.microphoneMenuItem = microphonePickerItem
         self.microphoneMenu = microphoneMenu
         refreshMicrophoneMenu()
+        refreshRecentTranslationsMenu()
     }
 
     private func configureSettingsWindow() {
@@ -613,10 +673,9 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
     }
 
     private var hasHotkeyRegistrationProblem: Bool {
-        switch hotkeyManager.registrationStatus {
-        case .conflict, .failed: true
-        default: false
-        }
+        if hotkeyManager.registrationStatus.isProblem { return true }
+        return settings.extendedKeyboardHotkeyEnabled
+            && hotkeyManager.extendedKeyboardRegistrationStatus.isProblem
     }
 
     private func updateMenu(for state: DictationPhase) {
@@ -634,6 +693,7 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         cancelMenuItem?.isEnabled = state.isActive
         copyErrorMenuItem?.isHidden = lastErrorDetails == nil
         microphoneMenuItem?.isEnabled = state == .idle
+        refreshRecentTranslationsMenu()
 
         let symbol: String
         switch state {
@@ -671,6 +731,41 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         refreshMicrophoneMenu()
+        refreshRecentTranslationsMenu()
+    }
+
+    private func refreshRecentTranslationsMenu() {
+        guard let recentTranslationsMenu else { return }
+        recentTranslationsMenu.removeAllItems()
+
+        let entries = transcriptionHistory.entries
+        recentTranslationsMenuItem?.isEnabled = !entries.isEmpty && !stateMachine.state.isActive
+        guard !entries.isEmpty else {
+            let emptyItem = NSMenuItem(title: "No recent transcriptions", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            recentTranslationsMenu.addItem(emptyItem)
+            return
+        }
+
+        for (index, translation) in entries.enumerated() {
+            let item = NSMenuItem(
+                title: "\(index + 1). \(Self.recentTranslationTitle(translation))",
+                action: #selector(copyRecentTranslation(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = translation
+            item.toolTip = translation
+            item.isEnabled = !stateMachine.state.isActive
+            recentTranslationsMenu.addItem(item)
+        }
+    }
+
+    private static func recentTranslationTitle(_ translation: String) -> String {
+        let oneLine = translation.components(separatedBy: .newlines).joined(separator: " ")
+        let limit = 72
+        guard oneLine.count > limit else { return oneLine }
+        return String(oneLine.prefix(limit - 1)) + "…"
     }
 
     private func refreshMicrophoneMenu() {
@@ -777,5 +872,11 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         guard let lastErrorDetails else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(lastErrorDetails, forType: .string)
+    }
+
+    @objc private func copyRecentTranslation(_ sender: NSMenuItem) {
+        guard !stateMachine.state.isActive,
+              let translation = sender.representedObject as? String else { return }
+        insertionService.copy(translation)
     }
 }

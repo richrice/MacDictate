@@ -14,7 +14,7 @@ final class HotkeyPresetTests: XCTestCase {
         let flattenedPresets = HotkeyShortcut.presetGroups.flatMap(\.shortcuts)
 
         XCTAssertEqual(HotkeyShortcut.presets, flattenedPresets)
-        XCTAssertEqual(HotkeyShortcut.presets.count, 17)
+        XCTAssertEqual(HotkeyShortcut.presets.count, 18)
     }
 
     func testCatalogMatchesPinnedContractExactly() {
@@ -26,6 +26,7 @@ final class HotkeyPresetTests: XCTestCase {
             HotkeyShortcut(keyCode: UInt32(kVK_Space), carbonModifiers: UInt32(optionKey | shiftKey), displayName: "⌥⇧ Space"),
             HotkeyShortcut(keyCode: UInt32(kVK_Space), carbonModifiers: UInt32(controlKey | shiftKey), displayName: "⌃⇧ Space"),
             HotkeyShortcut(keyCode: UInt32(kVK_Space), carbonModifiers: UInt32(controlKey | optionKey | cmdKey), displayName: "⌃⌥⌘ Space"),
+            HotkeyShortcut(keyCode: UInt32(kVK_RightControl), carbonModifiers: 0, displayName: "Right Control"),
             HotkeyShortcut(keyCode: UInt32(kVK_F13), carbonModifiers: 0, displayName: "F13"),
             HotkeyShortcut(keyCode: UInt32(kVK_F14), carbonModifiers: 0, displayName: "F14"),
             HotkeyShortcut(keyCode: UInt32(kVK_F15), carbonModifiers: 0, displayName: "F15"),
@@ -40,6 +41,13 @@ final class HotkeyPresetTests: XCTestCase {
 
         XCTAssertEqual(HotkeyShortcut.presets, expected)
         XCTAssertEqual(HotkeyShortcut.presets.first, HotkeyShortcut.defaultShortcut)
+    }
+
+    func testExtendedKeyboardDefaultUsesRightControl() {
+        XCTAssertEqual(
+            HotkeyShortcut.defaultExtendedKeyboardShortcut,
+            HotkeyShortcut(keyCode: UInt32(kVK_RightControl), carbonModifiers: 0, displayName: "Right Control")
+        )
     }
 
     func testPresetsContainDefaultAndEveryLegacyShortcut() {
@@ -86,8 +94,9 @@ final class HotkeyPresetTests: XCTestCase {
         XCTAssertEqual(Set(presets.map(\.id)).count, presets.count)
     }
 
-    func testBareKeyPresetsAreLimitedToF13ThroughF19() {
+    func testBareKeyPresetsAreLimitedToRightControlAndF13ThroughF19() {
         let safeBareKeyCodes: Set<UInt32> = [
+            UInt32(kVK_RightControl),
             UInt32(kVK_F13),
             UInt32(kVK_F14),
             UInt32(kVK_F15),
@@ -100,7 +109,7 @@ final class HotkeyPresetTests: XCTestCase {
         for preset in HotkeyShortcut.presets where preset.carbonModifiers == 0 {
             XCTAssertTrue(
                 safeBareKeyCodes.contains(preset.keyCode),
-                "Bare shortcut \(preset.displayName) is not a safe F13-F19 key"
+                "Bare shortcut \(preset.displayName) is not an approved external-keyboard key"
             )
         }
     }
@@ -197,6 +206,69 @@ final class HotkeyPresetTests: XCTestCase {
         XCTAssertFalse(manager.register(contested))
         XCTAssertEqual(manager.registrationStatus, .conflict(contested.displayName))
         XCTAssertEqual(manager.activeShortcut, working)
+    }
+
+    @MainActor
+    func testLaptopAndExtendedKeyboardShortcutsRegisterTogether() throws {
+        let laptop = HotkeyShortcut.defaultShortcut
+        let extended = HotkeyShortcut.defaultExtendedKeyboardShortcut
+        let manager = GlobalHotkeyManager()
+        defer { manager.unregister() }
+
+        try XCTSkipUnless(manager.register(laptop, for: .laptop))
+        try XCTSkipUnless(manager.register(extended, for: .extendedKeyboard))
+
+        XCTAssertEqual(manager.activeShortcut(for: .laptop), laptop)
+        XCTAssertEqual(manager.activeShortcut(for: .extendedKeyboard), extended)
+        XCTAssertEqual(manager.registrationStatus, .registered(laptop.displayName))
+        XCTAssertEqual(
+            manager.extendedKeyboardRegistrationStatus,
+            .registered(extended.displayName)
+        )
+    }
+
+    @MainActor
+    func testExtendedKeyboardConflictDoesNotDisableLaptopShortcut() throws {
+        let laptop = HotkeyShortcut.defaultShortcut
+        let contested = HotkeyShortcut(keyCode: UInt32(kVK_F18), carbonModifiers: 0, displayName: "F18")
+        let blocker = GlobalHotkeyManager()
+        defer { blocker.unregister() }
+        try XCTSkipUnless(blocker.register(contested))
+
+        let manager = GlobalHotkeyManager()
+        defer { manager.unregister() }
+        try XCTSkipUnless(manager.register(laptop, for: .laptop))
+
+        XCTAssertFalse(manager.register(contested, for: .extendedKeyboard))
+        XCTAssertEqual(manager.activeShortcut(for: .laptop), laptop)
+        XCTAssertNil(manager.activeShortcut(for: .extendedKeyboard))
+        XCTAssertEqual(manager.registrationStatus, .registered(laptop.displayName))
+        XCTAssertEqual(
+            manager.extendedKeyboardRegistrationStatus,
+            .conflict(contested.displayName)
+        )
+    }
+
+    @MainActor
+    func testExtendedKeyboardShortcutSettingsPersist() throws {
+        let suiteName = "ExtendedHotkeyTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var settings: SettingsStore? = SettingsStore(defaults: defaults)
+        XCTAssertTrue(settings?.extendedKeyboardHotkeyEnabled == true)
+        XCTAssertEqual(settings?.extendedKeyboardHotkey, .defaultExtendedKeyboardShortcut)
+        settings?.extendedKeyboardHotkeyEnabled = false
+        settings?.extendedKeyboardHotkey = HotkeyShortcut.extendedKeyboardShortcuts[3]
+        settings = nil
+
+        let reloaded = SettingsStore(defaults: defaults)
+        XCTAssertFalse(reloaded.extendedKeyboardHotkeyEnabled)
+        XCTAssertEqual(
+            reloaded.extendedKeyboardHotkey,
+            HotkeyShortcut.extendedKeyboardShortcuts[3]
+        )
     }
 
     @MainActor
