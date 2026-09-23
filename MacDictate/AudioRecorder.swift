@@ -42,8 +42,14 @@ enum AudioInputSelection: Codable, Hashable, Sendable {
         }
     }
 
-    var requiresExplicitDeviceBinding: Bool {
-        if case .device = self { true } else { false }
+    /// A selected device that is also the system default input needs no
+    /// binding: the default-device aggregate of AVAudioEngine already uses it.
+    func requiresExplicitDeviceBinding(
+        resolvedDeviceID: AudioDeviceID,
+        defaultDeviceID: AudioDeviceID?
+    ) -> Bool {
+        guard case .device = self else { return false }
+        return resolvedDeviceID != defaultDeviceID
     }
 }
 
@@ -468,8 +474,9 @@ final class AudioRecorder: AudioRecording {
     /// notification often fires benignly as recording starts (Bluetooth
     /// profile switches, sample-rate renegotiation). Re-tap the input with its
     /// current format and restart; only report an interruption if that fails.
-    private func recoverFromConfigurationChange() {
-        guard let engine, let audioWriter = writer else { return }
+    private func recoverFromConfigurationChange(of changedEngineID: ObjectIdentifier) {
+        guard let engine, ObjectIdentifier(engine) == changedEngineID,
+              let audioWriter = writer else { return }
         let inputNode = engine.inputNode
         inputNode.removeTap(onBus: 0)
         do {
@@ -655,7 +662,11 @@ final class AudioRecorder: AudioRecording {
         // AVAudioEngine follows macOS's default-device aggregate automatically.
         // Forcing its audio unit back to the physical default device fights that
         // aggregate during Bluetooth profile changes and repeatedly stops input.
-        guard selection.requiresExplicitDeviceBinding else {
+        // The same conflict occurs when the selected device is the default.
+        guard selection.requiresExplicitDeviceBinding(
+            resolvedDeviceID: deviceID,
+            defaultDeviceID: CoreAudioInputDevices.defaultDeviceID
+        ) else {
             AppLogger.audio.info("Using system default input: \(self.currentInputDeviceName, privacy: .public)")
             return
         }
@@ -710,9 +721,12 @@ final class AudioRecorder: AudioRecording {
             forName: .AVAudioEngineConfigurationChange,
             object: engine,
             queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.recoverFromConfigurationChange()
+        ) { [weak self, engineID = ObjectIdentifier(engine)] _ in
+            // The engine queue that posts this notification waits until this
+            // block returns. Recovery calls back into the engine, and an inline
+            // call can deadlock with that queue. Run the recovery later.
+            Task { @MainActor in
+                self?.recoverFromConfigurationChange(of: engineID)
             }
         }
     }
