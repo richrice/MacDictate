@@ -1,38 +1,76 @@
 @preconcurrency import AVFoundation
+import AudioToolbox
 import XCTest
 @testable import MacDictate
 
-private final class AudioTapInvocation: @unchecked Sendable {
-    private let block: AVAudioNodeTapBlock
-    private let buffer: AVAudioPCMBuffer
-    private let time: AVAudioTime
+private final class AudioQueueInputInvocation: @unchecked Sendable {
+    private let block: AudioQueueInputCallbackBlock
+    private let queue: AudioQueueRef
+    private let buffer: AudioQueueBufferRef
 
-    init(block: @escaping AVAudioNodeTapBlock, buffer: AVAudioPCMBuffer, time: AVAudioTime) {
+    init(block: @escaping AudioQueueInputCallbackBlock, queue: AudioQueueRef, buffer: AudioQueueBufferRef) {
         self.block = block
+        self.queue = queue
         self.buffer = buffer
-        self.time = time
     }
 
     func invoke() {
-        block(buffer, time)
+        var timeStamp = AudioTimeStamp()
+        block(queue, buffer, &timeStamp, 0, nil)
+    }
+}
+
+private final class LockedPeak: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: Float = 0
+
+    var value: Float {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedValue
+    }
+
+    func record(_ buffer: AVAudioPCMBuffer) {
+        let samples = UnsafeBufferPointer(start: buffer.floatChannelData![0], count: Int(buffer.frameLength))
+        lock.lock()
+        defer { lock.unlock() }
+        storedValue = samples.map(abs).max() ?? 0
     }
 }
 
 @MainActor
 final class AudioTapIsolationTests: XCTestCase {
-    func testTapBlockCanRunOffMainActor() throws {
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 64) else {
-            XCTFail("Could not create test audio buffer")
-            return
+    func testQueueInputBlockCanRunOffMainActor() throws {
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+        var queue: AudioQueueRef?
+        let status = AudioQueueNewInputWithDispatchQueue(
+            &queue,
+            format.streamDescription,
+            0,
+            DispatchQueue(label: "AudioTapIsolationTests"),
+            // A closure written here inherits main-actor isolation and traps
+            // when the queue calls it. The factory makes a nonisolated block.
+            AudioQueueInputBlockFactory.make(format: format) { _ in }
+        )
+        guard status == noErr, let queue else {
+            throw XCTSkip("This Mac has no input device for an audio queue (Core Audio error \(status)).")
         }
-        buffer.frameLength = 64
-        let counter = LockedCounter()
+        defer { AudioQueueDispose(queue, true) }
+
+        let frameCount = 64
+        var queueBuffer: AudioQueueBufferRef?
+        XCTAssertEqual(AudioQueueAllocateBuffer(queue, UInt32(frameCount * 4), &queueBuffer), noErr)
+        let buffer = try XCTUnwrap(queueBuffer)
+        let samples = buffer.pointee.mAudioData.assumingMemoryBound(to: Float.self)
+        for index in 0..<frameCount { samples[index] = 0.25 }
+        buffer.pointee.mAudioDataByteSize = UInt32(frameCount * 4)
+
+        let peak = LockedPeak()
         let completed = DispatchSemaphore(value: 0)
-        let block = AudioTapBlockFactory.make { _ in
-            _ = counter.increment()
+        let block = AudioQueueInputBlockFactory.make(format: format) { buffer in
+            peak.record(buffer)
         }
-        let invocation = AudioTapInvocation(block: block, buffer: buffer, time: AVAudioTime())
+        let invocation = AudioQueueInputInvocation(block: block, queue: queue, buffer: buffer)
 
         DispatchQueue.global(qos: .userInitiated).async {
             invocation.invoke()
@@ -40,7 +78,7 @@ final class AudioTapIsolationTests: XCTestCase {
         }
 
         XCTAssertEqual(completed.wait(timeout: .now() + 2), .success)
-        XCTAssertEqual(counter.value, 1)
+        XCTAssertEqual(peak.value, 0.25, accuracy: 0.001)
     }
 
     func testWriterRebuildsConverterWhenInputFormatChanges() throws {

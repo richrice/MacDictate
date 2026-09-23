@@ -41,16 +41,6 @@ enum AudioInputSelection: Codable, Hashable, Sendable {
         case let .device(uid, _): uid
         }
     }
-
-    /// A selected device that is also the system default input needs no
-    /// binding: the default-device aggregate of AVAudioEngine already uses it.
-    func requiresExplicitDeviceBinding(
-        resolvedDeviceID: AudioDeviceID,
-        defaultDeviceID: AudioDeviceID?
-    ) -> Bool {
-        guard case .device = self else { return false }
-        return resolvedDeviceID != defaultDeviceID
-    }
 }
 
 enum AudioInputDeviceReconnector {
@@ -85,11 +75,27 @@ enum AudioInputFallbackPolicy {
     }
 }
 
-enum AudioTapBlockFactory {
+enum AudioQueueInputBlockFactory {
+    /// The audio queue calls this block on its own dispatch queue. A block
+    /// made in a main-actor method inherits that isolation and traps off the
+    /// main thread, so this factory makes the block outside the main actor.
     nonisolated static func make(
+        format: AVAudioFormat,
         handler: @escaping @Sendable (AVAudioPCMBuffer) -> Void
-    ) -> AVAudioNodeTapBlock {
-        { buffer, _ in handler(buffer) }
+    ) -> AudioQueueInputCallbackBlock {
+        { queue, queueBuffer, _, _, _ in
+            let byteCount = queueBuffer.pointee.mAudioDataByteSize
+            let frameCount = byteCount / format.streamDescription.pointee.mBytesPerFrame
+            if frameCount > 0,
+               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount),
+               let samples = buffer.floatChannelData?[0] {
+                buffer.frameLength = frameCount
+                memcpy(samples, queueBuffer.pointee.mAudioData, Int(byteCount))
+                handler(buffer)
+            }
+            // After a stop, the queue rejects the buffer. That is expected.
+            AudioQueueEnqueueBuffer(queue, queueBuffer, 0, nil)
+        }
     }
 }
 
@@ -327,6 +333,23 @@ private enum CoreAudioInputDevices {
         stringProperty(deviceID, selector: kAudioObjectPropertyName)
     }
 
+    static func uid(for deviceID: AudioDeviceID) -> String? {
+        stringProperty(deviceID, selector: kAudioDevicePropertyDeviceUID)
+    }
+
+    static func nominalSampleRate(for deviceID: AudioDeviceID) -> Float64? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var sampleRate: Float64 = 0
+        var size = UInt32(MemoryLayout<Float64>.size)
+        let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &sampleRate)
+        guard status == noErr, sampleRate > 0 else { return nil }
+        return sampleRate
+    }
+
     private static func allDeviceIDs() -> [AudioDeviceID] {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
@@ -403,15 +426,18 @@ private enum CoreAudioInputDevices {
 @MainActor
 final class AudioRecorder: AudioRecording {
     private static let teardownDrainDuration: Duration = .milliseconds(750)
+    private static let queueBufferCount = 3
+    private static let queueBufferDuration = 0.05
 
     private let permissionManager: MicrophonePermissionProviding
+    private let callbackQueue = DispatchQueue(label: "MacDictate.AudioRecorder.input")
     private var inputSelection: AudioInputSelection
     private var fallbackInputSelection: AudioInputSelection?
-    private var engine: AVAudioEngine?
+    private var inputQueue: AudioQueueRef?
+    private var isRecording = false
     private var activeInputDeviceID: AudioDeviceID?
     private var writer: LockedAudioWriter?
     private var recordingURL: URL?
-    private var configurationObserver: NSObjectProtocol?
     private var restartAllowedAt: ContinuousClock.Instant?
 
     var onInterruption: ((String) -> Void)?
@@ -470,105 +496,37 @@ final class AudioRecorder: AudioRecording {
         inputSelection = selection
     }
 
-    /// AVAudioEngine stops itself when the input configuration changes, and the
-    /// notification often fires benignly as recording starts (Bluetooth
-    /// profile switches, sample-rate renegotiation). Re-tap the input with its
-    /// current format and restart; only report an interruption if that fails.
-    private func recoverFromConfigurationChange(of changedEngineID: ObjectIdentifier) {
-        guard let engine, ObjectIdentifier(engine) == changedEngineID,
-              let audioWriter = writer else { return }
-        let inputNode = engine.inputNode
-        inputNode.removeTap(onBus: 0)
-        do {
-            try applyInputSelectionWithFallback()
-        } catch {
-            onInterruption?(error.localizedDescription)
-            return
-        }
-        let format = inputNode.inputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else {
-            onInterruption?("The microphone configuration changed during recording.")
-            return
-        }
-        let tapBlock = AudioTapBlockFactory.make { [audioWriter] buffer in
-            audioWriter.append(buffer)
-        }
-        inputNode.installTap(onBus: 0, bufferSize: 2_048, format: format, block: tapBlock)
-        engine.prepare()
-        do {
-            try engine.start()
-            AppLogger.audio.info("Recovered from an input configuration change during recording")
-        } catch {
-            inputNode.removeTap(onBus: 0)
-            onInterruption?("The microphone configuration changed during recording.")
-        }
-    }
-
+    /// Opens an input audio queue on the selected device. An audio queue
+    /// records from the device it names. AVAudioEngine moved its input unit
+    /// back to its default-device aggregate, so it recorded the default input
+    /// (for example, a Bluetooth headset) and not the selected microphone.
     func prepare() async throws {
         guard await permissionManager.request() else { throw AudioRecorderError.permissionDenied }
         try Task.checkCancellation()
 
-        releaseInputEngine()
-        let engine = AVAudioEngine()
-        self.engine = engine
-        observeConfigurationChanges(for: engine)
-        do {
-            try applyInputSelectionWithFallback()
-            let format = engine.inputNode.inputFormat(forBus: 0)
-            guard format.sampleRate > 0, format.channelCount > 0 else {
-                throw AudioRecorderError.noInputDevice
-            }
-        } catch {
-            releaseInputEngine()
-            throw error
-        }
+        releaseInput()
+        try openInputWithFallback()
     }
 
     func start() throws {
-        guard writer == nil else { throw AudioRecorderError.alreadyRecording }
-        guard let engine else {
+        guard !isRecording else { throw AudioRecorderError.alreadyRecording }
+        guard let inputQueue, let url = recordingURL else {
             throw AudioRecorderError.engineFailed("The microphone was not prepared.")
         }
-        let inputNode = engine.inputNode
-        let inputFormat = inputNode.inputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
-            throw AudioRecorderError.noInputDevice
-        }
-
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MacDictate-\(UUID().uuidString)")
-            .appendingPathExtension("wav")
-        let audioWriter = try LockedAudioWriter(url: url, inputFormat: inputFormat)
-        writer = audioWriter
-        recordingURL = url
-
-        let tapBlock = AudioTapBlockFactory.make { [audioWriter] buffer in
-            audioWriter.append(buffer)
-        }
-        inputNode.installTap(onBus: 0, bufferSize: 2_048, format: inputFormat, block: tapBlock)
-
-        do {
-            engine.prepare()
-            try engine.start()
-        } catch {
-            inputNode.removeTap(onBus: 0)
-            writer = nil
-            recordingURL = nil
+        let status = AudioQueueStart(inputQueue, nil)
+        guard status == noErr else {
             try? FileManager.default.removeItem(at: url)
-            releaseInputEngine()
-            throw AudioRecorderError.engineFailed(error.localizedDescription)
+            releaseInput()
+            throw AudioRecorderError.engineFailed("Core Audio error \(status).")
         }
+        isRecording = true
     }
 
     func stop() throws -> RecordedAudio {
-        guard let engine, let writer, let url = recordingURL else {
+        guard isRecording, let writer, let url = recordingURL else {
             throw AudioRecorderError.notRecording
         }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        self.writer = nil
-        recordingURL = nil
-        releaseInputEngine()
+        releaseInput()
         do {
             let result = try writer.finish()
             return RecordedAudio(
@@ -584,19 +542,15 @@ final class AudioRecorder: AudioRecording {
     }
 
     func cancel() {
-        if writer != nil, let engine {
-            engine.inputNode.removeTap(onBus: 0)
-        }
-        writer = nil
-        if let recordingURL { try? FileManager.default.removeItem(at: recordingURL) }
-        recordingURL = nil
-        releaseInputEngine()
+        let url = recordingURL
+        releaseInput()
+        if let url { try? FileManager.default.removeItem(at: url) }
     }
 
-    private func applyInputSelectionWithFallback() throws {
+    private func openInputWithFallback() throws {
         reconnectSelectedInputIfAvailable()
         do {
-            try applyInputSelection(inputSelection)
+            try openInput(inputSelection)
         } catch let primaryError as AudioRecorderError {
             let canFallback: Bool
             switch primaryError {
@@ -620,7 +574,7 @@ final class AudioRecorder: AudioRecording {
                 ) ?? fallback
                 guard resolvedFallback != unavailableSelection else { continue }
                 do {
-                    try applyInputSelection(resolvedFallback)
+                    try openInput(resolvedFallback)
                 } catch is AudioRecorderError {
                     continue
                 } catch {
@@ -655,47 +609,69 @@ final class AudioRecorder: AudioRecording {
         onInputDeviceReconnection?(replacement)
     }
 
-    private func applyInputSelection(_ selection: AudioInputSelection) throws {
+    private func openInput(_ selection: AudioInputSelection) throws {
         let deviceID = try resolveInputDeviceID(for: selection)
-        activeInputDeviceID = deviceID
-
-        // AVAudioEngine follows macOS's default-device aggregate automatically.
-        // Forcing its audio unit back to the physical default device fights that
-        // aggregate during Bluetooth profile changes and repeatedly stops input.
-        // The same conflict occurs when the selected device is the default.
-        guard selection.requiresExplicitDeviceBinding(
-            resolvedDeviceID: deviceID,
-            defaultDeviceID: CoreAudioInputDevices.defaultDeviceID
-        ) else {
-            AppLogger.audio.info("Using system default input: \(self.currentInputDeviceName, privacy: .public)")
-            return
+        guard let deviceUID = CoreAudioInputDevices.uid(for: deviceID) else {
+            throw AudioRecorderError.inputDeviceUnavailable(selection.displayName)
+        }
+        guard let sampleRate = CoreAudioInputDevices.nominalSampleRate(for: deviceID),
+              let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1) else {
+            throw AudioRecorderError.noInputDevice
         }
 
-        guard let engine else {
-            throw AudioRecorderError.engineFailed("The microphone was not prepared.")
-        }
-        let inputNode = engine.inputNode
-        guard let audioUnit = inputNode.audioUnit else {
-            throw AudioRecorderError.engineFailed("The input audio unit is unavailable.")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MacDictate-\(UUID().uuidString)")
+            .appendingPathExtension("wav")
+        let audioWriter = try LockedAudioWriter(url: url, inputFormat: format)
+        let inputBlock = AudioQueueInputBlockFactory.make(format: format) { [audioWriter] buffer in
+            audioWriter.append(buffer)
         }
 
-        engine.stop()
-        engine.reset()
-        var mutableDeviceID = deviceID
-        let status = AudioUnitSetProperty(
-            audioUnit,
-            kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global,
+        var queue: AudioQueueRef?
+        var status = AudioQueueNewInputWithDispatchQueue(
+            &queue,
+            format.streamDescription,
             0,
-            &mutableDeviceID,
-            UInt32(MemoryLayout<AudioDeviceID>.size)
+            callbackQueue,
+            inputBlock
+        )
+        guard status == noErr, let queue else {
+            try? FileManager.default.removeItem(at: url)
+            throw AudioRecorderError.engineFailed("Core Audio error \(status).")
+        }
+
+        var currentDevice = deviceUID as CFString
+        status = AudioQueueSetProperty(
+            queue,
+            kAudioQueueProperty_CurrentDevice,
+            &currentDevice,
+            UInt32(MemoryLayout<CFString>.size)
         )
         guard status == noErr else {
-            throw AudioRecorderError.inputDeviceSelectionFailed(
-                selection.displayName,
-                status
-            )
+            AudioQueueDispose(queue, true)
+            try? FileManager.default.removeItem(at: url)
+            throw AudioRecorderError.inputDeviceSelectionFailed(selection.displayName, status)
         }
+
+        let bytesPerBuffer = UInt32(sampleRate * Self.queueBufferDuration)
+            * format.streamDescription.pointee.mBytesPerFrame
+        for _ in 0..<Self.queueBufferCount {
+            var buffer: AudioQueueBufferRef?
+            status = AudioQueueAllocateBuffer(queue, bytesPerBuffer, &buffer)
+            if status == noErr, let buffer {
+                status = AudioQueueEnqueueBuffer(queue, buffer, 0, nil)
+            }
+            guard status == noErr else {
+                AudioQueueDispose(queue, true)
+                try? FileManager.default.removeItem(at: url)
+                throw AudioRecorderError.engineFailed("Core Audio error \(status).")
+            }
+        }
+
+        inputQueue = queue
+        writer = audioWriter
+        recordingURL = url
+        activeInputDeviceID = deviceID
         AppLogger.audio.info("Selected input device: \(self.currentInputDeviceName, privacy: .public)")
     }
 
@@ -716,46 +692,24 @@ final class AudioRecorder: AudioRecording {
         }
     }
 
-    private func observeConfigurationChanges(for engine: AVAudioEngine) {
-        configurationObserver = NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange,
-            object: engine,
-            queue: .main
-        ) { [weak self, engineID = ObjectIdentifier(engine)] _ in
-            // The engine queue that posts this notification waits until this
-            // block returns. Recovery calls back into the engine, and an inline
-            // call can deadlock with that queue. Run the recovery later.
-            Task { @MainActor in
-                self?.recoverFromConfigurationChange(of: engineID)
-            }
-        }
-    }
-
-    private func releaseInputEngine() {
-        if let configurationObserver {
-            NotificationCenter.default.removeObserver(configurationObserver)
-            self.configurationObserver = nil
-        }
-        guard let engine else {
-            activeInputDeviceID = nil
-            return
-        }
-
-        engine.stop()
-        self.engine = nil
+    private func releaseInput() {
+        isRecording = false
+        writer = nil
+        recordingURL = nil
         activeInputDeviceID = nil
-        let drainDuration = Self.teardownDrainDuration
-        restartAllowedAt = ContinuousClock().now.advanced(by: drainDuration)
+        guard let inputQueue else { return }
+        self.inputQueue = nil
 
-        // Bluetooth route changes can leave AVAudioIOUnit property callbacks
-        // executing briefly after stop() returns. Keep the stopped engine alive
-        // and reject a new recording until those callbacks drain. Creating a
-        // replacement engine during that window can churn the Bluetooth
-        // input/output profiles until macOS drops the headset route entirely.
-        Task { @MainActor in
-            try? await Task.sleep(for: drainDuration)
-            withExtendedLifetime(engine) {}
-        }
+        // A synchronous dispose stops the queue. Then the empty sync block
+        // waits for callbacks that the queue already scheduled, so the
+        // writer has all recorded audio before stop() finishes the file.
+        AudioQueueDispose(inputQueue, true)
+        callbackQueue.sync {}
+
+        // Reopening a Bluetooth input at once after it closes can churn the
+        // input/output profiles until macOS drops the headset route. Reject a
+        // new recording for a short time after each close.
+        restartAllowedAt = ContinuousClock().now.advanced(by: Self.teardownDrainDuration)
     }
 }
 
