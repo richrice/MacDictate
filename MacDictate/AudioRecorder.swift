@@ -423,6 +423,121 @@ private enum CoreAudioInputDevices {
     }
 }
 
+final class AudioQueueRunningListenerBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var hasStarted = false
+    private var isExpectedStop = false
+    private var didNotify = false
+    private let onUnexpectedStop: @Sendable () -> Void
+
+    init(onUnexpectedStop: @escaping @Sendable () -> Void) {
+        self.onUnexpectedStop = onUnexpectedStop
+    }
+
+    func markStarted() {
+        lock.withLock { hasStarted = true }
+    }
+
+    func markExpectedStop() {
+        lock.withLock { isExpectedStop = true }
+    }
+
+    func notifyStopped() {
+        let shouldFire = lock.withLock { () -> Bool in
+            guard hasStarted, !isExpectedStop, !didNotify else { return false }
+            didNotify = true
+            return true
+        }
+        if shouldFire {
+            onUnexpectedStop()
+        }
+    }
+}
+
+@MainActor
+final class AudioDeviceListMonitor: ObservableObject {
+    @Published private(set) var availableInputDevices: [AudioInputDevice] = []
+    @Published private(set) var defaultInputDeviceName: String = "No input device"
+
+    private nonisolated(unsafe) var devicesListener: AudioObjectPropertyListenerBlock?
+    private nonisolated(unsafe) var defaultInputListener: AudioObjectPropertyListenerBlock?
+
+    init() {
+        refresh()
+        installListeners()
+    }
+
+    deinit {
+        var devicesAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        if let devicesListener {
+            AudioObjectRemovePropertyListenerBlock(
+                AudioObjectID(kAudioObjectSystemObject),
+                &devicesAddress,
+                DispatchQueue.main,
+                devicesListener
+            )
+        }
+        var defaultInputAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        if let defaultInputListener {
+            AudioObjectRemovePropertyListenerBlock(
+                AudioObjectID(kAudioObjectSystemObject),
+                &defaultInputAddress,
+                DispatchQueue.main,
+                defaultInputListener
+            )
+        }
+    }
+
+    func refresh() {
+        availableInputDevices = CoreAudioInputDevices.available
+        defaultInputDeviceName = CoreAudioInputDevices.defaultDeviceID
+            .flatMap(CoreAudioInputDevices.name(for:)) ?? "No input device"
+    }
+
+    private func installListeners() {
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            MainActor.assumeIsolated {
+                self?.refresh()
+            }
+        }
+        var devicesAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        if AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &devicesAddress,
+            DispatchQueue.main,
+            block
+        ) == noErr {
+            devicesListener = block
+        }
+
+        var defaultInputAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        if AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &defaultInputAddress,
+            DispatchQueue.main,
+            block
+        ) == noErr {
+            defaultInputListener = block
+        }
+    }
+}
+
 @MainActor
 final class AudioRecorder: AudioRecording {
     private static let teardownDrainDuration: Duration = .milliseconds(750)
@@ -431,13 +546,17 @@ final class AudioRecorder: AudioRecording {
 
     private let permissionManager: MicrophonePermissionProviding
     private let callbackQueue = DispatchQueue(label: "MacDictate.AudioRecorder.input")
+    private let teardownQueue = DispatchQueue(label: "MacDictate.AudioRecorder.teardown")
     private var inputSelection: AudioInputSelection
     private var fallbackInputSelection: AudioInputSelection?
     private var inputQueue: AudioQueueRef?
+    private var runningListenerBox: AudioQueueRunningListenerBox?
     private var isRecording = false
     private var activeInputDeviceID: AudioDeviceID?
+    private var activeInputDeviceName: String?
     private var writer: LockedAudioWriter?
     private var recordingURL: URL?
+    private var pendingTeardownCount = 0
     private var restartAllowedAt: ContinuousClock.Instant?
 
     var onInterruption: ((String) -> Void)?
@@ -445,8 +564,8 @@ final class AudioRecorder: AudioRecording {
     var onInputDeviceReconnection: ((AudioInputSelection) -> Void)?
 
     var currentInputDeviceName: String {
-        if let activeInputDeviceID {
-            return CoreAudioInputDevices.name(for: activeInputDeviceID) ?? inputSelection.displayName
+        if let activeInputDeviceName {
+            return activeInputDeviceName
         }
         switch inputSelection {
         case .systemDefault:
@@ -468,6 +587,7 @@ final class AudioRecorder: AudioRecording {
     }
 
     var isReadyForRecording: Bool {
+        guard pendingTeardownCount == 0 else { return false }
         guard let restartAllowedAt else { return true }
         return ContinuousClock().now >= restartAllowedAt
     }
@@ -504,7 +624,9 @@ final class AudioRecorder: AudioRecording {
         guard await permissionManager.request() else { throw AudioRecorderError.permissionDenied }
         try Task.checkCancellation()
 
-        releaseInput()
+        releaseInput(flushBuffers: false)
+        await waitForPendingTeardown()
+        try Task.checkCancellation()
         try openInputWithFallback()
     }
 
@@ -516,9 +638,10 @@ final class AudioRecorder: AudioRecording {
         let status = AudioQueueStart(inputQueue, nil)
         guard status == noErr else {
             try? FileManager.default.removeItem(at: url)
-            releaseInput()
+            releaseInput(flushBuffers: false)
             throw AudioRecorderError.engineFailed("Core Audio error \(status).")
         }
+        runningListenerBox?.markStarted()
         isRecording = true
     }
 
@@ -526,7 +649,7 @@ final class AudioRecorder: AudioRecording {
         guard isRecording, let writer, let url = recordingURL else {
             throw AudioRecorderError.notRecording
         }
-        releaseInput()
+        releaseInput(flushBuffers: true)
         do {
             let result = try writer.finish()
             return RecordedAudio(
@@ -543,7 +666,7 @@ final class AudioRecorder: AudioRecording {
 
     func cancel() {
         let url = recordingURL
-        releaseInput()
+        releaseInput(flushBuffers: false)
         if let url { try? FileManager.default.removeItem(at: url) }
     }
 
@@ -640,13 +763,16 @@ final class AudioRecorder: AudioRecording {
             throw AudioRecorderError.engineFailed("Core Audio error \(status).")
         }
 
-        var currentDevice = deviceUID as CFString
-        status = AudioQueueSetProperty(
-            queue,
-            kAudioQueueProperty_CurrentDevice,
-            &currentDevice,
-            UInt32(MemoryLayout<CFString>.size)
-        )
+        let deviceUIDRef = deviceUID as CFString
+        var currentDevice = Unmanaged.passUnretained(deviceUIDRef)
+        status = withExtendedLifetime(deviceUIDRef) {
+            AudioQueueSetProperty(
+                queue,
+                kAudioQueueProperty_CurrentDevice,
+                &currentDevice,
+                UInt32(MemoryLayout<Unmanaged<CFString>>.size)
+            )
+        }
         guard status == noErr else {
             AudioQueueDispose(queue, true)
             try? FileManager.default.removeItem(at: url)
@@ -668,11 +794,44 @@ final class AudioRecorder: AudioRecording {
             }
         }
 
+        let listenerBox = AudioQueueRunningListenerBox { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.isRecording else { return }
+                AppLogger.audio.error("The microphone input queue stopped unexpectedly")
+                self.onInterruption?("The microphone stopped unexpectedly.")
+            }
+        }
+        status = AudioQueueAddPropertyListener(
+            queue,
+            kAudioQueueProperty_IsRunning,
+            Self.queueRunningListener,
+            Unmanaged.passUnretained(listenerBox).toOpaque()
+        )
+        if status != noErr {
+            AppLogger.audio.warning(
+                "Could not observe microphone interruptions (Core Audio error \(status))"
+            )
+        }
+
         inputQueue = queue
+        runningListenerBox = status == noErr ? listenerBox : nil
         writer = audioWriter
         recordingURL = url
         activeInputDeviceID = deviceID
+        activeInputDeviceName = CoreAudioInputDevices.name(for: deviceID) ?? selection.displayName
         AppLogger.audio.info("Selected input device: \(self.currentInputDeviceName, privacy: .public)")
+    }
+
+    private nonisolated static let queueRunningListener: AudioQueuePropertyListenerProc = { userData, queue, propertyID in
+        guard propertyID == kAudioQueueProperty_IsRunning, let userData else { return }
+        var isRunning: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioQueueGetProperty(queue, kAudioQueueProperty_IsRunning, &isRunning, &size) == noErr,
+              isRunning == 0 else {
+            return
+        }
+        let box = Unmanaged<AudioQueueRunningListenerBox>.fromOpaque(userData).takeUnretainedValue()
+        box.notifyStopped()
     }
 
     private func resolveInputDeviceID(
@@ -692,33 +851,88 @@ final class AudioRecorder: AudioRecording {
         }
     }
 
-    private func releaseInput() {
+    private func waitForPendingTeardown() async {
+        guard pendingTeardownCount > 0 else { return }
+        await withCheckedContinuation { continuation in
+            teardownQueue.async {
+                continuation.resume()
+            }
+        }
+    }
+
+    private func releaseInput(flushBuffers: Bool) {
         isRecording = false
         writer = nil
         recordingURL = nil
         activeInputDeviceID = nil
+        activeInputDeviceName = nil
+        let listenerBox = runningListenerBox
+        runningListenerBox = nil
+        listenerBox?.markExpectedStop()
+
         guard let inputQueue else { return }
         self.inputQueue = nil
 
-        // A synchronous dispose stops the queue. Then the empty sync block
-        // waits for callbacks that the queue already scheduled, so the
-        // writer has all recorded audio before stop() finishes the file.
-        AudioQueueDispose(inputQueue, true)
-        callbackQueue.sync {}
+        if flushBuffers {
+            // Stop synchronously and drain callbackQueue so the writer receives
+            // all recorded audio before stop() finalizes the WAV file.
+            AudioQueueStop(inputQueue, true)
+            callbackQueue.sync {}
+        }
 
-        // Reopening a Bluetooth input at once after it closes can churn the
-        // input/output profiles until macOS drops the headset route. Reject a
-        // new recording for a short time after each close.
-        restartAllowedAt = ContinuousClock().now.advanced(by: Self.teardownDrainDuration)
+        // Dispose off the main actor so Core Audio / Bluetooth HAL teardown
+        // never stalls the UI or hotkey event loop. Keep `listenerBox` alive
+        // until AudioQueueDispose finishes removing the property listener.
+        let queueBox = SendableAudioQueueRef(rawValue: inputQueue)
+        pendingTeardownCount += 1
+        teardownQueue.async { [weak self] in
+            AudioQueueDispose(queueBox.rawValue, true)
+            _ = listenerBox
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.pendingTeardownCount = max(0, self.pendingTeardownCount - 1)
+                // Reopening a Bluetooth input at once after it closes can churn the
+                // input/output profiles until macOS drops the headset route. Reject a
+                // new recording for a short time after each close.
+                self.restartAllowedAt = ContinuousClock().now.advanced(by: Self.teardownDrainDuration)
+            }
+        }
     }
+}
+
+private struct SendableAudioQueueRef: @unchecked Sendable {
+    let rawValue: AudioQueueRef
 }
 
 protocol TemporaryFileCleaning: Sendable {
     func delete(_ url: URL)
+    func cleanupStaleRecordings()
+}
+
+extension TemporaryFileCleaning {
+    func cleanupStaleRecordings() {}
 }
 
 struct TemporaryFileCleaner: TemporaryFileCleaning {
+    private let directory: URL
+
+    init(directory: URL = FileManager.default.temporaryDirectory) {
+        self.directory = directory
+    }
+
     func delete(_ url: URL) {
         try? FileManager.default.removeItem(at: url)
+    }
+
+    func cleanupStaleRecordings() {
+        guard let urls = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ) else {
+            return
+        }
+        for url in urls where url.pathExtension == "wav" && url.lastPathComponent.hasPrefix("MacDictate-") {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }

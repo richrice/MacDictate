@@ -25,7 +25,7 @@ enum RecordingPolicy {
 }
 
 @MainActor
-final class AppCoordinator: NSObject, NSMenuDelegate {
+final class AppCoordinator: NSObject {
     let settings: SettingsStore
     let stateMachine: DictationStateMachine
     let hotkeyManager: GlobalHotkeyManager
@@ -41,17 +41,7 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
     private let fileCleaner: TemporaryFileCleaning
     let transcriptionHistory: TranscriptionHistory
 
-    private var statusItem: NSStatusItem?
-    private var statusMenuItem: NSMenuItem?
-    private var startMenuItem: NSMenuItem?
-    private var stopMenuItem: NSMenuItem?
-    private var cancelMenuItem: NSMenuItem?
-    private var copyErrorMenuItem: NSMenuItem?
-    private var recentTranslationsMenuItem: NSMenuItem?
-    private var recentTranslationsMenu: NSMenu?
-    private var microphoneMenuItem: NSMenuItem?
-    private var microphoneMenu: NSMenu?
-    private var microphoneMenuSelections: [Int: AudioInputSelection] = [:]
+    private var statusBarController: StatusBarController?
     private var settingsWindowController: SettingsWindowController?
     private var welcomeWindowController: WelcomeWindowController?
     private var hudController: HUDController?
@@ -103,6 +93,7 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
 
     func start() {
         NSApp.setActivationPolicy(.accessory)
+        fileCleaner.cleanupStaleRecordings()
         configureMenuBar()
         configureSettingsWindow()
         hudController = HUDController(
@@ -126,12 +117,12 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
             let previousSelection = self.settings.audioInputSelection
             self.settings.fallbackAudioInputSelection = previousSelection
             self.settings.audioInputSelection = selection
-            self.refreshMicrophoneMenu()
+            self.statusBarController?.refreshMicrophoneMenu()
         }
         audioRecorder.onInputDeviceReconnection = { [weak self] selection in
             guard let self else { return }
             self.settings.audioInputSelection = selection
-            self.refreshMicrophoneMenu()
+            self.statusBarController?.refreshMicrophoneMenu()
         }
 
         do {
@@ -419,7 +410,7 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
             }
 
             transcriptionHistory.add(transcript)
-            refreshRecentTranslationsMenu()
+            statusBarController?.refreshRecentTranslationsMenu()
 
             var completionMessage = "Transcription complete"
             var insertionOutcome: TextInsertionOutcome?
@@ -584,78 +575,40 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         }
     }
 
+    func shutdown() {
+        activeWorkflowID = nil
+        workflowTask?.cancel()
+        workflowTask = nil
+        maximumDurationTask?.cancel()
+        maximumDurationTask = nil
+        resetTask?.cancel()
+        resetTask = nil
+        audioRecorder.cancel()
+    }
+
     private func configureMenuBar() {
-        let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "MacDictate")
-        statusItem.button?.toolTip = "MacDictate — Ready"
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        menu.delegate = self
-
-        let status = NSMenuItem(title: "Ready", action: nil, keyEquivalent: "")
-        status.isEnabled = false
-        menu.addItem(status)
-        menu.addItem(.separator())
-
-        let start = NSMenuItem(title: "Start Dictation", action: #selector(startFromMenu), keyEquivalent: "")
-        start.target = self
-        menu.addItem(start)
-        let stop = NSMenuItem(title: "Stop and Transcribe", action: #selector(stopFromMenu), keyEquivalent: "")
-        stop.target = self
-        stop.isEnabled = false
-        menu.addItem(stop)
-        let cancel = NSMenuItem(title: "Cancel Current Dictation", action: #selector(cancelFromMenu), keyEquivalent: "")
-        cancel.target = self
-        cancel.isEnabled = false
-        menu.addItem(cancel)
-        let copyError = NSMenuItem(title: "Copy Last Error Details", action: #selector(copyLastError), keyEquivalent: "")
-        copyError.target = self
-        copyError.isHidden = true
-        menu.addItem(copyError)
-
-        let recentTranslationsItem = NSMenuItem(
-            title: "Recent Transcriptions",
-            action: nil,
-            keyEquivalent: ""
+        statusBarController = StatusBarController(
+            settings: settings,
+            stateMachine: stateMachine,
+            hotkeyManager: hotkeyManager,
+            audioRecorder: audioRecorder,
+            transcriptionHistory: transcriptionHistory,
+            actions: StatusBarController.Actions(
+                start: { [weak self] in self?.beginDictation() },
+                stop: { [weak self] in self?.stopFromMenu() },
+                cancel: { [weak self] in self?.cancelActive() },
+                copyLastError: { [weak self] in self?.copyLastError() },
+                copyRecentTranslation: { [weak self] translation in
+                    self?.insertionService.copy(translation)
+                },
+                selectMicrophone: { [weak self] selection in
+                    self?.selectMicrophone(selection)
+                },
+                openSettings: { [weak self] in self?.openSettings() },
+                openAccessibilitySettings: { [weak self] in self?.accessibilityPermission.openSettings() },
+                openMicrophoneSettings: { [weak self] in self?.microphonePermission.openSettings() }
+            )
         )
-        let recentTranslationsMenu = NSMenu(title: "Recent Transcriptions")
-        recentTranslationsItem.submenu = recentTranslationsMenu
-        menu.addItem(recentTranslationsItem)
-        menu.addItem(.separator())
-
-        let microphonePickerItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
-        let microphoneMenu = NSMenu(title: "Microphone")
-        microphonePickerItem.submenu = microphoneMenu
-        menu.addItem(microphonePickerItem)
-        menu.addItem(.separator())
-
-        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
-        settingsItem.target = self
-        menu.addItem(settingsItem)
-        let accessibilityItem = NSMenuItem(title: "Open Accessibility Settings", action: #selector(openAccessibilitySettings), keyEquivalent: "")
-        accessibilityItem.target = self
-        menu.addItem(accessibilityItem)
-        let microphoneItem = NSMenuItem(title: "Open Microphone Settings", action: #selector(openMicrophoneSettings), keyEquivalent: "")
-        microphoneItem.target = self
-        menu.addItem(microphoneItem)
-        menu.addItem(.separator())
-
-        let quit = NSMenuItem(title: "Quit MacDictate", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.addItem(quit)
-        statusItem.menu = menu
-
-        self.statusItem = statusItem
-        statusMenuItem = status
-        startMenuItem = start
-        stopMenuItem = stop
-        cancelMenuItem = cancel
-        copyErrorMenuItem = copyError
-        recentTranslationsMenuItem = recentTranslationsItem
-        self.recentTranslationsMenu = recentTranslationsMenu
-        self.microphoneMenuItem = microphonePickerItem
-        self.microphoneMenu = microphoneMenu
-        refreshMicrophoneMenu()
-        refreshRecentTranslationsMenu()
     }
 
     private func configureSettingsWindow() {
@@ -672,39 +625,8 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         settingsWindowController = SettingsWindowController(rootView: view)
     }
 
-    private var hasHotkeyRegistrationProblem: Bool {
-        if hotkeyManager.registrationStatus.isProblem { return true }
-        return settings.extendedKeyboardHotkeyEnabled
-            && hotkeyManager.extendedKeyboardRegistrationStatus.isProblem
-    }
-
     private func updateMenu(for state: DictationPhase) {
-        var statusText = state.statusText
-        if state == .idle, hasHotkeyRegistrationProblem {
-            statusText = "Shortcut unavailable — choose another in Settings…"
-        }
-        statusMenuItem?.title = statusText
-        startMenuItem?.isEnabled = state == .idle
-        if case .recording = state {
-            stopMenuItem?.isEnabled = true
-        } else {
-            stopMenuItem?.isEnabled = false
-        }
-        cancelMenuItem?.isEnabled = state.isActive
-        copyErrorMenuItem?.isHidden = lastErrorDetails == nil
-        microphoneMenuItem?.isEnabled = state == .idle
-        refreshRecentTranslationsMenu()
-
-        let symbol: String
-        switch state {
-        case .recording: symbol = "mic.fill"
-        case .preparing, .transcribing, .inserting: symbol = "ellipsis.circle"
-        case .failed: symbol = "exclamationmark.triangle.fill"
-        case .idle where hasHotkeyRegistrationProblem: symbol = "exclamationmark.triangle.fill"
-        default: symbol = "waveform"
-        }
-        statusItem?.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: statusText)
-        statusItem?.button?.toolTip = "MacDictate — \(statusText)"
+        statusBarController?.update(for: state, hasErrorDetails: lastErrorDetails != nil)
     }
 
     private func showWelcomeWindow() {
@@ -729,110 +651,7 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         welcomeWindowController = nil
     }
 
-    func menuWillOpen(_ menu: NSMenu) {
-        refreshMicrophoneMenu()
-        refreshRecentTranslationsMenu()
-    }
-
-    private func refreshRecentTranslationsMenu() {
-        guard let recentTranslationsMenu else { return }
-        recentTranslationsMenu.removeAllItems()
-
-        let entries = transcriptionHistory.entries
-        recentTranslationsMenuItem?.isEnabled = !entries.isEmpty && !stateMachine.state.isActive
-        guard !entries.isEmpty else {
-            let emptyItem = NSMenuItem(title: "No recent transcriptions", action: nil, keyEquivalent: "")
-            emptyItem.isEnabled = false
-            recentTranslationsMenu.addItem(emptyItem)
-            return
-        }
-
-        for (index, translation) in entries.enumerated() {
-            let item = NSMenuItem(
-                title: "\(index + 1). \(Self.recentTranslationTitle(translation))",
-                action: #selector(copyRecentTranslation(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = translation
-            item.toolTip = translation
-            item.isEnabled = !stateMachine.state.isActive
-            recentTranslationsMenu.addItem(item)
-        }
-    }
-
-    private static func recentTranslationTitle(_ translation: String) -> String {
-        let oneLine = translation.components(separatedBy: .newlines).joined(separator: " ")
-        let limit = 72
-        guard oneLine.count > limit else { return oneLine }
-        return String(oneLine.prefix(limit - 1)) + "…"
-    }
-
-    private func refreshMicrophoneMenu() {
-        guard let microphoneMenu else { return }
-        microphoneMenu.removeAllItems()
-        microphoneMenuSelections.removeAll()
-        microphoneMenuItem?.title = "Microphone: \(audioRecorder.currentInputDeviceName)"
-
-        var nextTag = 0
-        let systemDefaultItem = NSMenuItem(
-            title: "System Default",
-            action: #selector(selectMicrophone(_:)),
-            keyEquivalent: ""
-        )
-        systemDefaultItem.target = self
-        systemDefaultItem.tag = nextTag
-        systemDefaultItem.state = settings.audioInputSelection == .systemDefault ? .on : .off
-        systemDefaultItem.isEnabled = stateMachine.state == .idle
-        microphoneMenuSelections[nextTag] = .systemDefault
-        microphoneMenu.addItem(systemDefaultItem)
-        nextTag += 1
-
-        let devices = audioRecorder.availableInputDevices
-        if !devices.isEmpty {
-            microphoneMenu.addItem(.separator())
-        }
-        for device in devices {
-            let selection = device.selection
-            let item = NSMenuItem(
-                title: device.name,
-                action: #selector(selectMicrophone(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.tag = nextTag
-            item.state = settings.audioInputSelection.uid == device.uid ? .on : .off
-            item.isEnabled = stateMachine.state == .idle
-            microphoneMenuSelections[nextTag] = selection
-            microphoneMenu.addItem(item)
-            nextTag += 1
-        }
-
-        if case let .device(uid, name) = settings.audioInputSelection,
-           !devices.contains(where: { $0.uid == uid }) {
-            microphoneMenu.addItem(.separator())
-            let unavailable = NSMenuItem(
-                title: "\(name) (Unavailable)",
-                action: nil,
-                keyEquivalent: ""
-            )
-            unavailable.state = .on
-            unavailable.isEnabled = false
-            microphoneMenu.addItem(unavailable)
-        } else if devices.isEmpty {
-            let unavailable = NSMenuItem(
-                title: "No microphones available",
-                action: nil,
-                keyEquivalent: ""
-            )
-            unavailable.isEnabled = false
-            microphoneMenu.addItem(unavailable)
-        }
-    }
-
-    @objc private func startFromMenu() { beginDictation() }
-
-    @objc private func stopFromMenu() {
+    private func stopFromMenu() {
         // Menu-initiated stops are always deliberate; skip the short-press minimum.
         if case let .recording(startedAt) = stateMachine.state,
            let activeWorkflowID {
@@ -844,13 +663,8 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
         }
     }
 
-    @objc private func cancelFromMenu() { cancelActive() }
-
-    @objc private func selectMicrophone(_ sender: NSMenuItem) {
-        guard stateMachine.state == .idle,
-              let selection = microphoneMenuSelections[sender.tag] else {
-            return
-        }
+    private func selectMicrophone(_ selection: AudioInputSelection) {
+        guard stateMachine.state == .idle else { return }
         do {
             let previousSelection = settings.audioInputSelection
             try audioRecorder.selectInputDevice(selection)
@@ -858,25 +672,17 @@ final class AppCoordinator: NSObject, NSMenuDelegate {
                 settings.fallbackAudioInputSelection = previousSelection
             }
             settings.audioInputSelection = selection
-            refreshMicrophoneMenu()
+            statusBarController?.refreshMicrophoneMenu()
         } catch {
             fail(error)
         }
     }
 
-    @objc private func openSettings() { settingsWindowController?.show() }
-    @objc private func openAccessibilitySettings() { accessibilityPermission.openSettings() }
-    @objc private func openMicrophoneSettings() { microphonePermission.openSettings() }
+    private func openSettings() { settingsWindowController?.show() }
 
-    @objc private func copyLastError() {
+    private func copyLastError() {
         guard let lastErrorDetails else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(lastErrorDetails, forType: .string)
-    }
-
-    @objc private func copyRecentTranslation(_ sender: NSMenuItem) {
-        guard !stateMachine.state.isActive,
-              let translation = sender.representedObject as? String else { return }
-        insertionService.copy(translation)
     }
 }

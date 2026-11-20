@@ -96,7 +96,9 @@ struct SettingsView: View {
     @ObservedObject var accessibilityPermission: AccessibilityPermissionManager
     @ObservedObject var launchAtLogin: LaunchAtLoginManager
     @StateObject private var credentials: CredentialSettingsModel
+    @StateObject private var deviceMonitor = AudioDeviceListMonitor()
     @State private var inputDeviceError: String?
+    @State private var supportFeedback: String?
 
     let audioRecorder: AudioRecording
 
@@ -140,6 +142,7 @@ struct SettingsView: View {
             accessibilityPermission.refresh()
             launchAtLogin.refresh()
             credentials.refresh()
+            deviceMonitor.refresh()
         }
     }
 
@@ -165,17 +168,17 @@ struct SettingsView: View {
                     set: { selectInputDevice($0) }
                 )) {
                     Text("System Default").tag(AudioInputSelection.systemDefault)
-                    ForEach(audioRecorder.availableInputDevices) { device in
+                    ForEach(deviceMonitor.availableInputDevices) { device in
                         Text(device.name).tag(device.selection)
                     }
                     if case let .device(uid, name) = settings.audioInputSelection,
-                       !audioRecorder.availableInputDevices.contains(where: { $0.uid == uid }) {
+                       !deviceMonitor.availableInputDevices.contains(where: { $0.uid == uid }) {
                         Text("\(name) (Unavailable)")
                             .tag(settings.audioInputSelection)
                     }
                 }
                 .disabled(stateMachine.state.isActive)
-                LabeledContent("Active microphone", value: audioRecorder.currentInputDeviceName)
+                LabeledContent("Active microphone", value: activeMicrophoneDisplayName)
                 Text("The selection applies only to MacDictate and is remembered between launches.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -194,6 +197,16 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private var activeMicrophoneDisplayName: String {
+        switch settings.audioInputSelection {
+        case .systemDefault:
+            return deviceMonitor.defaultInputDeviceName
+        case let .device(uid, name):
+            return deviceMonitor.availableInputDevices.first(where: { $0.uid == uid })?.name
+                ?? "\(name) (Unavailable)"
+        }
     }
 
     private func selectInputDevice(_ selection: AudioInputSelection) {
@@ -238,6 +251,16 @@ struct SettingsView: View {
                 Text("The laptop shortcut remains available. Right Control is dedicated to dictation while selected, so choose an F-key if you use it in other shortcuts. F13–F15 may map to Print Screen, Scroll Lock, or Pause on some keyboards.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if settings.extendedKeyboardHotkeyEnabled,
+                   settings.extendedKeyboardHotkey == .defaultExtendedKeyboardShortcut,
+                   accessibilityPermission.status != .granted {
+                    Label(
+                        "Right Control requires Accessibility permission to receive key presses in other apps.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
             }
             Section("Registration") {
                 registrationRow(
@@ -322,7 +345,7 @@ struct SettingsView: View {
             }
             Section("Accessibility") {
                 permissionRow(status: accessibilityPermission.status)
-                Text("Required to insert text into the application that was focused when recording began. Without it, MacDictate copies the transcript for manual paste.")
+                Text("Required to insert text into the application that was focused when recording began, and to use the Right Control shortcut. Without it, MacDictate copies the transcript for manual paste.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("Request Access") { _ = accessibilityPermission.requestIfNeeded() }
@@ -343,8 +366,16 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Support") {
-                Button("Copy Redacted Diagnostics") { copyDiagnostics() }
-                Button("Open Logs Folder") { AppDiagnostics.openLogsFolder() }
+                HStack {
+                    Button("Copy Redacted Diagnostics") { copyDiagnostics() }
+                    Button("Copy Recent Logs") { copyRecentLogs() }
+                    Button("Open Console") { AppDiagnostics.openConsoleApp() }
+                }
+                if let supportFeedback {
+                    Text(supportFeedback)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .formStyle(.grouped)
@@ -410,10 +441,19 @@ struct SettingsView: View {
             accessibility: accessibilityPermission.status,
             hasAPIKey: credentials.isConfigured,
             hotkeyStatus: hotkeyManager.registrationStatus,
-            extendedKeyboardHotkeyStatus: hotkeyManager.extendedKeyboardRegistrationStatus
+            extendedKeyboardHotkeyStatus: hotkeyManager.extendedKeyboardRegistrationStatus,
+            activeInputDeviceName: audioRecorder.currentInputDeviceName
         )
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+        supportFeedback = "Redacted diagnostics copied to clipboard."
+    }
+
+    private func copyRecentLogs() {
+        let logs = AppDiagnostics.recentLogs()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(logs, forType: .string)
+        supportFeedback = "Recent redacted logs copied to clipboard."
     }
 }
 

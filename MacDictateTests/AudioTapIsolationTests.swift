@@ -81,6 +81,18 @@ final class AudioTapIsolationTests: XCTestCase {
         XCTAssertEqual(peak.value, 0.25, accuracy: 0.001)
     }
 
+    func testAudioRecorderPrepareAndCancelSucceedsWithRealAudioQueue() async throws {
+        final class AlwaysGrantedMicPermission: MicrophonePermissionProviding {
+            func request() async -> Bool { true }
+        }
+        let recorder = AudioRecorder(permissionManager: AlwaysGrantedMicPermission())
+        guard !recorder.availableInputDevices.isEmpty else {
+            throw XCTSkip("This Mac has no input device available for AudioRecorder.")
+        }
+        try await recorder.prepare()
+        recorder.cancel()
+    }
+
     func testWriterRebuildsConverterWhenInputFormatChanges() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("MacDictate-format-change-\(UUID().uuidString)")
@@ -116,5 +128,53 @@ final class AudioTapIsolationTests: XCTestCase {
         XCTAssertEqual(AudioLevelScale.normalized(peakAmplitude: 0.001), 0, accuracy: 0.001)
         XCTAssertEqual(AudioLevelScale.normalized(peakAmplitude: 0.1), 2.0 / 3.0, accuracy: 0.01)
         XCTAssertEqual(AudioLevelScale.normalized(peakAmplitude: 1), 1, accuracy: 0.001)
+    }
+
+    func testRunningListenerBoxFiresOnlyOnUnexpectedStopAfterStart() {
+        let fireCount = LockedCounter()
+        let box = AudioQueueRunningListenerBox {
+            _ = fireCount.increment()
+        }
+
+        // Before start, a stop callback must be ignored.
+        box.notifyStopped()
+        XCTAssertEqual(fireCount.value, 0)
+
+        // After start, an unexpected stop fires exactly once.
+        box.markStarted()
+        box.notifyStopped()
+        box.notifyStopped()
+        XCTAssertEqual(fireCount.value, 1)
+
+        // Expected stops never fire.
+        let expectedCount = LockedCounter()
+        let expectedBox = AudioQueueRunningListenerBox {
+            _ = expectedCount.increment()
+        }
+        expectedBox.markStarted()
+        expectedBox.markExpectedStop()
+        expectedBox.notifyStopped()
+        XCTAssertEqual(expectedCount.value, 0)
+    }
+
+    func testTemporaryFileCleanerSweepsOnlyStaleMacDictateWavs() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MacDictateCleanerTest-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let staleWav = directory.appendingPathComponent("MacDictate-stale.wav")
+        let otherWav = directory.appendingPathComponent("other.wav")
+        let otherTxt = directory.appendingPathComponent("MacDictate-note.txt")
+        try Data("a".utf8).write(to: staleWav)
+        try Data("b".utf8).write(to: otherWav)
+        try Data("c".utf8).write(to: otherTxt)
+
+        let cleaner = TemporaryFileCleaner(directory: directory)
+        cleaner.cleanupStaleRecordings()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staleWav.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: otherWav.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: otherTxt.path))
     }
 }

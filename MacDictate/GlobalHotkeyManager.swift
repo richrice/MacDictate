@@ -200,14 +200,15 @@ final class GlobalHotkeyManager: ObservableObject {
         rightControlIsDown = false
     }
 
+    // NX_DEVICERCTLKEYMASK: distinguishes the right Control key even when left Control is held.
+    private static let rightControlDeviceMask: UInt = 0x0000_2000
+
     private func handleRightControlEvent(_ event: NSEvent) {
         guard event.keyCode == UInt16(kVK_RightControl),
               let slot = modifierMonitorSlot,
               activeShortcuts[slot] != nil else { return }
 
-        // NSEvent retains device-specific modifier bits. This mask distinguishes the right
-        // Control key even if the left Control key is held at the same time.
-        let isDown = event.modifierFlags.rawValue & 0x0000_2000 != 0
+        let isDown = event.modifierFlags.rawValue & Self.rightControlDeviceMask != 0
         guard isDown != rightControlIsDown else { return }
         rightControlIsDown = isDown
 
@@ -220,6 +221,19 @@ final class GlobalHotkeyManager: ObservableObject {
             pressedSlot = nil
             onKeyUp?()
         }
+    }
+
+    /// If Secure Event Input (for example, a password field) swallowed a Right Control key-up,
+    /// `pressedSlot` would remain latched and block other shortcuts. Clear the stale latch when
+    /// Right Control is no longer physically held.
+    private func clearStuckRightControlIfNeeded() {
+        guard let monitorSlot = modifierMonitorSlot,
+              pressedSlot == monitorSlot else { return }
+        let physicallyDown = NSEvent.modifierFlags.rawValue & Self.rightControlDeviceMask != 0
+        guard !physicallyDown else { return }
+        rightControlIsDown = false
+        pressedSlot = nil
+        AppLogger.hotkey.info("Cleared stuck Right Control modifier state after missed key-up")
     }
 
     private func setStatus(_ status: HotkeyRegistrationStatus, for slot: HotkeySlot) {
@@ -235,6 +249,7 @@ final class GlobalHotkeyManager: ObservableObject {
         }
         switch kind {
         case UInt32(kEventHotKeyPressed):
+            clearStuckRightControlIfNeeded()
             guard pressedSlot == nil else { return noErr }
             pressedSlot = slot
             onKeyDown?()

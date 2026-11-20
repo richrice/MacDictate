@@ -119,6 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        coordinator.shutdown()
         audioOutputController.restoreImmediately()
     }
 

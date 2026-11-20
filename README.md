@@ -8,7 +8,7 @@ Hold **Option-Space** (or **Right Control** on an extended keyboard), speak, and
 
 1. Download `MacDictate-<version>.zip` from the [latest release](https://github.com/richrice/MacDictate/releases/latest) and unzip it.
 2. Move `MacDictate.app` into `/Applications`.
-3. First launch: release builds are development-signed, not notarized, so macOS will refuse a normal double-click with "Apple cannot check it for malicious software." Either right-click the app and choose **Open**, then **Open** again in the dialog, or run:
+3. First launch: CI release builds are unsigned and not notarized, so macOS will refuse a normal double-click with "Apple cannot check it for malicious software." Either right-click the app and choose **Open**, then **Open** again in the dialog, or run:
 
    ```sh
    xattr -d com.apple.quarantine /Applications/MacDictate.app
@@ -89,7 +89,7 @@ The default model is `gpt-4o-transcribe`. `gpt-4o-mini-transcribe` is available 
 The explicit workflow states are `idle`, `preparing`, `recording`, `transcribing`, `inserting`, `completed`, `cancelled`, and `failed`. A second recording cannot start while transcription or insertion is active, but pressing the shortcut during the brief completion or error display starts a new dictation immediately. Errors stay on screen for four seconds with a hint pointing at **Copy Last Error Details**; other terminal states clear after about two seconds, and a press shorter than 250 ms explains itself instead of just reporting "Cancelled". The menu can also start a recording; **Stop and Transcribe** finishes a menu-started recording deliberately.
 
 - Carbon global hotkeys provide both key-down and key-up events and consume the shortcuts before the foreground app receives them. Auto-repeat is ignored. The laptop and optional extended-keyboard shortcuts register independently, and Settings reports conflicts for each without disabling the other working shortcut.
-- AVAudioEngine captures the input chosen in MacDictate, using its persistent Core Audio device ID without changing the system-wide input. If moving a USB microphone changes that ID, MacDictate automatically adopts the new ID when exactly one available input has the saved name. If the active microphone cannot be used, MacDictate tries the previous input and then the system-default input. AVAudioConverter writes mono 16 kHz, 16-bit linear PCM in a temporary WAV file. A five-minute ceiling keeps the largest default upload near 9.6 MB before WAV overhead.
+- Core Audio `AudioQueue` captures the input chosen in MacDictate, using its persistent Core Audio device ID without changing the system-wide input. If moving a USB microphone changes that ID, MacDictate automatically adopts the new ID when exactly one available input has the saved name. If the active microphone cannot be used, MacDictate tries the previous input and then the system-default input. `AVAudioConverter` writes mono 16 kHz, 16-bit linear PCM in a temporary WAV file. A five-minute ceiling keeps the largest default upload near 9.6 MB before WAV overhead.
 - On macOS 14.2 and newer, a private Core Audio process tap silences every other application's output until delivery completes. The tap excludes MacDictate; MacDictate never reads or stores its audio, changes device mute or volume, or sends play/pause commands. Destroying the tap restores output automatically.
 - URLSession posts binary-safe multipart form data to `https://api.openai.com/v1/audio/transcriptions`. HTTP 429 and transient 5xx responses receive at most one delayed retry, honoring a numeric `Retry-After` header up to five seconds; authentication and other permanent 4xx failures are not retried.
 - The app first tries the Accessibility selected-text attribute, then verifies that the exact expected value remains present rather than trusting the setter's return code. If that control rejects direct insertion, MacDictate sends Unicode keyboard events directly to the captured application and applies the same verification.
@@ -117,7 +117,7 @@ MacDictate never synthesizes Return or Enter.
 - **Hotkey:** simultaneous laptop and extended-keyboard shortcuts, modifier/Space and F13–F19 presets, default restoration, and independent live registration/conflict status. Right Control is the extended-keyboard default and is dedicated to dictation while selected. Some keyboards map F13–F15 to Print Screen, Scroll Lock, or Pause; modifier-only shortcuts, hardware actions, and remapping software cannot create a detectable registration conflict.
 - **OpenAI:** save/replace/delete the Keychain credential, key verification, model, language, context prompt, and prompt reset.
 - **Permissions:** live Microphone and Accessibility states with links to the correct System Settings panes.
-- **Diagnostics:** version/build, redacted diagnostics, unified-log folder, and content-free debug metadata logging.
+- **Diagnostics:** version/build, redacted diagnostics, recent redacted unified logs, Console shortcut, and content-free debug metadata logging.
 
 Launch at login uses `SMAppService`. It works reliably after placing a signed build in `/Applications`; a development build may report that approval or installation is required.
 

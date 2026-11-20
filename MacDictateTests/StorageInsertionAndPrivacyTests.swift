@@ -415,4 +415,30 @@ final class StorageInsertionAndPrivacyTests: XCTestCase {
         let bearer = "Bearer some.opaque-token+value"
         XCTAssertFalse(SecretRedactor.redact("header was \(bearer)").contains("some.opaque-token+value"))
     }
+
+    func testDiagnosticsIncludesAudioAndMuteContext() throws {
+        let suiteName = "DiagnosticsContextTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let settings = SettingsStore(defaults: defaults)
+        settings.audioInputSelection = .device(uid: "usb-mic-1", name: "USB Studio Mic")
+        settings.muteSystemAudioDuringDictation = false
+
+        let output = AppDiagnostics.make(
+            settings: settings,
+            state: .idle,
+            microphone: .granted,
+            accessibility: .granted,
+            hasAPIKey: true,
+            hotkeyStatus: .registered("⌥ Space"),
+            extendedKeyboardHotkeyStatus: .registered("Right Control"),
+            activeInputDeviceName: "USB Studio Mic"
+        )
+
+        XCTAssertTrue(output.contains("Input device preference: USB Studio Mic"))
+        XCTAssertTrue(output.contains("Active microphone: USB Studio Mic"))
+        XCTAssertTrue(output.contains("Mute system audio during dictation: false"))
+    }
 }

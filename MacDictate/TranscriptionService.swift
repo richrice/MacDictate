@@ -41,6 +41,20 @@ enum TranscriptionError: LocalizedError, Equatable {
     static func shouldRetry(statusCode: Int) -> Bool {
         statusCode == 429 || (500...599).contains(statusCode)
     }
+
+    static func shouldRetry(urlError: URLError) -> Bool {
+        switch urlError.code {
+        case .networkConnectionLost,
+             .timedOut,
+             .dnsLookupFailed,
+             .cannotFindHost,
+             .cannotConnectToHost,
+             .notConnectedToInternet:
+            true
+        default:
+            false
+        }
+    }
 }
 
 enum APIKeyVerification: Equatable, Sendable {
@@ -52,9 +66,11 @@ enum APIKeyVerification: Equatable, Sendable {
 /// Checks an API key against a cheap authenticated endpoint so a typo surfaces
 /// at save time instead of failing mid-dictation.
 struct OpenAIKeyVerifier: Sendable {
+    private static let sharedSession: URLSession = makeSession()
+
     private let session: URLSession
 
-    init(session: URLSession = OpenAIKeyVerifier.makeSession()) {
+    init(session: URLSession = OpenAIKeyVerifier.sharedSession) {
         self.session = session
     }
 
@@ -180,6 +196,10 @@ final class OpenAITranscriptionService: TranscriptionService {
                 // The surrounding task was cancelled; report it as a cancellation, not a network failure.
                 throw CancellationError()
             } catch let error as URLError {
+                if attempt == 0, TranscriptionError.shouldRetry(urlError: error) {
+                    try await Task.sleep(nanoseconds: retryDelayNanoseconds)
+                    continue
+                }
                 throw TranscriptionError.network(error.localizedDescription)
             } catch {
                 throw TranscriptionError.network(error.localizedDescription)
@@ -193,7 +213,10 @@ final class OpenAITranscriptionService: TranscriptionService {
         form.addFile(name: "file", filename: "dictation.wav", mimeType: "audio/wav", contents: fileData)
         form.addField(name: "model", value: configuration.model.rawValue)
         form.addField(name: "response_format", value: "text")
-        form.addField(name: "prompt", value: configuration.contextPrompt)
+        let trimmedPrompt = configuration.contextPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedPrompt.isEmpty {
+            form.addField(name: "prompt", value: configuration.contextPrompt)
+        }
         if let language = configuration.language.apiValue {
             form.addField(name: "language", value: language)
         }

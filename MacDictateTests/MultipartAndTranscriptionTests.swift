@@ -273,5 +273,48 @@ final class MultipartAndTranscriptionTests: XCTestCase {
         }
         XCTAssertEqual(counter.value, 1)
     }
+
+    func testTransientNetworkErrorIsRetriedOnce() async throws {
+        let counter = LockedCounter()
+        MockURLProtocol.handler = { request in
+            let attempt = counter.increment()
+            if attempt == 1 {
+                throw URLError(.networkConnectionLost)
+            }
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                Data("Recovered after drop.".utf8)
+            )
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [MockURLProtocol.self]
+        let service = OpenAITranscriptionService(
+            session: URLSession(configuration: sessionConfiguration),
+            retryDelayNanoseconds: 1
+        )
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
+        try Data("fake wav".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let result = try await service.transcribe(fileURL: file, configuration: configuration)
+        XCTAssertEqual(result, "Recovered after drop.")
+        XCTAssertEqual(counter.value, 2)
+    }
+
+    func testBlankContextPromptIsOmittedFromMultipartRequest() throws {
+        let blankConfig = TranscriptionConfiguration(
+            apiKey: "test-secret-key",
+            model: .mini,
+            language: .english,
+            contextPrompt: "   \n\t  "
+        )
+        let service = OpenAITranscriptionService()
+        let request = service.makeRequest(fileData: Data("wav".utf8), configuration: blankConfig)
+        let body = try XCTUnwrap(request.httpBody)
+        let text = String(decoding: body, as: UTF8.self)
+        XCTAssertFalse(text.contains("name=\"prompt\""))
+    }
 }
 

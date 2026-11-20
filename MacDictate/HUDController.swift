@@ -14,27 +14,47 @@ private struct HUDView: View {
     var showsMuteNote: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 10) {
-                Group {
-                    switch phase {
-                    case .recording:
-                        Image(systemName: "mic.fill").foregroundStyle(.red)
-                    case .preparing, .transcribing, .inserting:
-                        ProgressView().controlSize(.small)
-                    case .completed:
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                    case .failed:
-                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    case .cancelled:
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                    case .idle:
-                        Image(systemName: "waveform")
+        Group {
+            if case let .recording(startedAt) = phase {
+                TimelineView(.periodic(from: .now, by: 0.1)) { context in
+                    let elapsed = max(0, context.date.timeIntervalSince(startedAt))
+                    let level = audioRecorder.inputLevel
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "mic.fill").foregroundStyle(.red)
+                            Text("Recording  \(elapsed, format: .number.precision(.fractionLength(1)))s")
+                                .monospacedDigit()
+                        }
+                        VStack(alignment: .leading, spacing: 3) {
+                            if showsMuteNote {
+                                Text("System audio muted until your text is delivered")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            HStack(spacing: 8) {
+                                Text("Mic: \(audioRecorder.currentInputDeviceName)")
+                                    .lineLimit(1)
+                                ProgressView(value: Double(level))
+                                    .progressViewStyle(.linear)
+                                    .tint(level > 0.05 ? .green : .secondary)
+                                    .frame(width: 90)
+                                    .accessibilityLabel("Microphone input level")
+                                    .accessibilityValue("\(Int(level * 100)) percent")
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
                     }
                 }
-                statusContent
+            } else {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 10) {
+                        phaseIcon
+                        Text(phase.statusText).lineLimit(2)
+                    }
+                    staticDetails
+                }
             }
-            inputDetails
         }
         .font(.system(size: 14, weight: .medium))
         .padding(.horizontal, 16)
@@ -46,49 +66,31 @@ private struct HUDView: View {
     }
 
     @ViewBuilder
-    private var statusContent: some View {
-        if case let .recording(startedAt) = phase {
-            TimelineView(.periodic(from: .now, by: 0.1)) { context in
-                let elapsed = max(0, context.date.timeIntervalSince(startedAt))
-                Text("Recording  \(elapsed, format: .number.precision(.fractionLength(1)))s")
-                    .monospacedDigit()
-            }
-        } else {
-            Text(phase.statusText).lineLimit(2)
+    private var phaseIcon: some View {
+        switch phase {
+        case .recording:
+            Image(systemName: "mic.fill").foregroundStyle(.red)
+        case .preparing, .transcribing, .inserting:
+            ProgressView().controlSize(.small)
+        case .completed:
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+        case .failed:
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+        case .cancelled:
+            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+        case .idle:
+            Image(systemName: "waveform")
         }
     }
 
     @ViewBuilder
-    private var inputDetails: some View {
+    private var staticDetails: some View {
         switch phase {
         case .preparing:
             Text("Mic: \(audioRecorder.currentInputDeviceName)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-        case .recording:
-            TimelineView(.periodic(from: .now, by: 0.1)) { _ in
-                VStack(alignment: .leading, spacing: 3) {
-                    if showsMuteNote {
-                        Text("System audio muted until your text is delivered")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                    HStack(spacing: 8) {
-                        Text("Mic: \(audioRecorder.currentInputDeviceName)")
-                            .lineLimit(1)
-                        let level = audioRecorder.inputLevel
-                        ProgressView(value: Double(level))
-                            .progressViewStyle(.linear)
-                            .tint(level > 0.05 ? .green : .secondary)
-                            .frame(width: 90)
-                            .accessibilityLabel("Microphone input level")
-                            .accessibilityValue("\(Int(level * 100)) percent")
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-            }
         case .failed:
             Text("Full details: Copy Last Error Details in the menu bar menu")
                 .font(.caption)
@@ -108,7 +110,6 @@ final class HUDController: NSObject, NSWindowDelegate {
     private let settings: SettingsStore
     private let audioRecorder: AudioRecording
     private var cancellable: AnyCancellable?
-    private var hideTask: Task<Void, Never>?
 
     init(
         stateMachine: DictationStateMachine,
@@ -153,7 +154,6 @@ final class HUDController: NSObject, NSWindowDelegate {
     }
 
     private func render(_ phase: DictationPhase) {
-        hideTask?.cancel()
         guard settings.showHUD, phase != .idle else {
             panel.orderOut(nil)
             return
@@ -172,20 +172,6 @@ final class HUDController: NSObject, NSWindowDelegate {
         )
         positionPanel()
         panel.orderFrontRegardless()
-
-        let delay: UInt64?
-        switch phase {
-        case .completed, .cancelled: delay = 1_800_000_000
-        case .failed: delay = 4_200_000_000
-        default: delay = nil
-        }
-        if let delay {
-            hideTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: delay)
-                guard !Task.isCancelled else { return }
-                self?.panel.orderOut(nil)
-            }
-        }
     }
 
     private func positionPanel() {

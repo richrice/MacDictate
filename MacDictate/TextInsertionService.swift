@@ -280,6 +280,9 @@ final class ClipboardPasteInserter: PasteTextInserting {
             let result = try await verification.result(
                 timeout: requiresFrontmostHIDEvents
                     ? .seconds(2)
+                    : .nanoseconds(Int64(pasteDelayNanoseconds)),
+                unverifiableWait: requiresFrontmostHIDEvents
+                    ? .milliseconds(350)
                     : .nanoseconds(Int64(pasteDelayNanoseconds))
             )
             _ = clipboard.restore(snapshot, ifChangeCountIs: transcriptChangeCount)
@@ -380,9 +383,12 @@ private struct AccessibilityTextChangeVerification {
         )
     }
 
-    func result(timeout: Duration) async throws -> EventTextInsertionResult {
+    func result(
+        timeout: Duration,
+        unverifiableWait: Duration? = nil
+    ) async throws -> EventTextInsertionResult {
         guard let element, let originalValue else {
-            try await Task.sleep(for: timeout)
+            try await Task.sleep(for: unverifiableWait ?? timeout)
             return .unverified
         }
 
@@ -472,9 +478,10 @@ private struct AccessibilityTextChangeVerification {
 
 @MainActor
 private func waitForPhysicalModifierRelease() async throws {
-    let deadline = Date().addingTimeInterval(1.0)
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: .seconds(1))
     while !NSEvent.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
-          Date() < deadline {
+          clock.now < deadline {
         try await Task.sleep(for: .milliseconds(25))
     }
 }
@@ -521,8 +528,9 @@ final class DefaultTextInsertionService: TextInsertionService {
             return .copiedForManualPaste
         }
 
-        if target.bundleIdentifier == "com.openai.codex"
-            || target.bundleIdentifier == "com.googlecode.iterm2" {
+        if ClipboardPasteInserter.requiresFrontmostHIDEvents(
+            bundleIdentifier: target.bundleIdentifier
+        ) {
             AppLogger.insertion.info(
                 "Using focused paste delivery for \(target.name, privacy: .public)"
             )

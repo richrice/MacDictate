@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: ./scripts/bootstrap.sh
+
+      - name: Run tests
+        run: |
+          xcodebuild -project MacDictate.xcodeproj -scheme MacDictate -configuration Debug \
+            -derivedDataPath DerivedData -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO test

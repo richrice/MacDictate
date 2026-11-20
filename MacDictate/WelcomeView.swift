@@ -95,7 +95,7 @@ struct WelcomeView: View {
                 Button("Request Access") { _ = accessibilityPermission.requestIfNeeded() }
                     .disabled(accessibilityPermission.status == .granted)
             }
-            Text("Needed to insert text automatically. Without it, each transcript is copied so you can press ⌘V.")
+            Text("Needed to insert text automatically and to use the Right Control shortcut. Without it, each transcript is copied so you can press ⌘V.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if accessibilityPermission.status == .denied {

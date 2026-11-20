@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import OSLog
 
 enum SecretRedactor {
     static func redact(_ text: String) -> String {
@@ -29,12 +30,13 @@ enum AppDiagnostics {
         accessibility: PermissionStatus,
         hasAPIKey: Bool,
         hotkeyStatus: HotkeyRegistrationStatus,
-        extendedKeyboardHotkeyStatus: HotkeyRegistrationStatus
+        extendedKeyboardHotkeyStatus: HotkeyRegistrationStatus,
+        activeInputDeviceName: String? = nil
     ) -> String {
         let info = Bundle.main.infoDictionary
         let version = info?["CFBundleShortVersionString"] as? String ?? "unknown"
         let build = info?["CFBundleVersion"] as? String ?? "unknown"
-        let lines = [
+        var lines = [
             "MacDictate diagnostics",
             "Version: \(version) (\(build))",
             "macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
@@ -44,6 +46,13 @@ enum AppDiagnostics {
             "API key configured: \(hasAPIKey ? "yes" : "no")",
             "Model: \(settings.model.rawValue)",
             "Language: \(settings.language.rawValue)",
+            "Input device preference: \(settings.audioInputSelection.displayName)"
+        ]
+        if let activeInputDeviceName {
+            lines.append("Active microphone: \(activeInputDeviceName)")
+        }
+        lines.append(contentsOf: [
+            "Mute system audio during dictation: \(settings.muteSystemAudioDuringDictation)",
             "Laptop hotkey: \(settings.hotkey.displayName)",
             "Laptop hotkey registration: \(hotkeyStatus.displayText)",
             "Extended keyboard hotkey enabled: \(settings.extendedKeyboardHotkeyEnabled)",
@@ -54,7 +63,7 @@ enum AppDiagnostics {
             "Automatic insertion: \(settings.automaticallyInsert)",
             "Copy transcription: \(settings.copyToClipboard)",
             "Debug logging: \(settings.debugLogging)"
-        ]
+        ])
         return SecretRedactor.redact(lines.joined(separator: "\n"))
     }
 
@@ -65,9 +74,27 @@ enum AppDiagnostics {
         return "\(version) (\(build))"
     }
 
-    static func openLogsFolder() {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs", isDirectory: true)
-        NSWorkspace.shared.open(url)
+    static func recentLogs(limit: Int = 200) -> String {
+        do {
+            let store = try OSLogStore(scope: .currentProcessIdentifier)
+            let predicate = NSPredicate(format: "subsystem == %@", AppLogger.subsystem)
+            let entries = try store.getEntries(matching: predicate)
+                .compactMap { $0 as? OSLogEntryLog }
+            let formatter = ISO8601DateFormatter()
+            let formatted = entries.suffix(limit).map { entry in
+                "\(formatter.string(from: entry.date)) [\(entry.category)] \(entry.composedMessage)"
+            }
+            guard !formatted.isEmpty else {
+                return "No MacDictate log entries recorded during this session."
+            }
+            return SecretRedactor.redact(formatted.joined(separator: "\n"))
+        } catch {
+            return "Unable to read unified logs: \(error.localizedDescription)"
+        }
+    }
+
+    static func openConsoleApp() {
+        let consoleURL = URL(fileURLWithPath: "/System/Applications/Utilities/Console.app")
+        NSWorkspace.shared.open(consoleURL)
     }
 }
