@@ -316,6 +316,10 @@ struct SettingsView: View {
                 }
             }
             Section("Developer vocabulary context") {
+                Toggle("Include active window, cursor, and workspace context", isOn: $settings.includeActiveContext)
+                Text("Sends the active app, window title, nearby text before the cursor (skipping password fields), and Jira/issue keys or filenames scanned from Git/SVN, terminal output, and root docs (CLAUDE.md, AGENTS.md, GEMINI.md, README.md). Redacted before sending.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 TextEditor(text: $settings.transcriptionPrompt)
                     .font(.body)
                     .frame(minHeight: 150)
@@ -326,6 +330,48 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                     Spacer()
                     Button("Reset to Default") { settings.resetPrompt() }
+                }
+            }
+            if !settings.learnedPromptHints.isEmpty || !settings.learnedReplacements.isEmpty {
+                Section("Learned corrections") {
+                    if !settings.learnedPromptHints.isEmpty {
+                        Text("Prompt hints")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        ForEach(settings.learnedPromptHints, id: \.self) { hint in
+                            HStack {
+                                Text(hint)
+                                    .font(.callout)
+                                Spacer()
+                                Button(role: .destructive) {
+                                    settings.removeLearnedPromptHint(hint)
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Remove prompt hint")
+                            }
+                        }
+                    }
+                    if !settings.learnedReplacements.isEmpty {
+                        Text("Auto-replacements")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        ForEach(settings.learnedReplacements) { rule in
+                            HStack {
+                                Text("“\(rule.from)” → “\(rule.to)”")
+                                    .font(.callout)
+                                Spacer()
+                                Button(role: .destructive) {
+                                    settings.removeLearnedReplacement(rule)
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Remove replacement rule")
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -3,17 +3,23 @@ import Foundation
 import OSLog
 
 enum SecretRedactor {
+    private static let rules: [(pattern: String, replacement: String)] = [
+        (#"(?i)Bearer\s+[A-Za-z0-9._~+\-/]+=*"#, "<redacted>"),
+        (#"sk-[A-Za-z0-9_\-]{8,}"#, "<redacted>"),
+        (#"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b"#, "<redacted>"),
+        (#"\bgithub_pat_[A-Za-z0-9_]{20,}\b"#, "<redacted>"),
+        (#"\bAKIA[0-9A-Z]{16}\b"#, "<redacted>"),
+        (#"\bxox[abprs]-[A-Za-z0-9\-]{10,}\b"#, "<redacted>"),
+        (#"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"#, "<redacted>"),
+        (#"(?i)((?:api[_ -]?key|password|passwd|secret|token)\s*[:=]\s*)\S+"#, "$1<redacted>")
+    ]
+
     static func redact(_ text: String) -> String {
         var result = text
-        let patterns = [
-            #"(?i)Bearer\s+[A-Za-z0-9._~+\-/]+=*"#,
-            #"sk-[A-Za-z0-9_\-]{8,}"#,
-            #"(?i)(api[_ -]?key\s*[:=]\s*)\S+"#
-        ]
-        for pattern in patterns {
+        for rule in rules {
             result = result.replacingOccurrences(
-                of: pattern,
-                with: pattern.localizedCaseInsensitiveContains("api") ? "$1<redacted>" : "<redacted>",
+                of: rule.pattern,
+                with: rule.replacement,
                 options: .regularExpression
             )
         }
@@ -46,6 +52,7 @@ enum AppDiagnostics {
             "API key configured: \(hasAPIKey ? "yes" : "no")",
             "Model: \(settings.model.rawValue)",
             "Language: \(settings.language.rawValue)",
+            "Active context enabled: \(settings.includeActiveContext)",
             "Input device preference: \(settings.audioInputSelection.displayName)"
         ]
         if let activeInputDeviceName {

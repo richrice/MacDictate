@@ -39,11 +39,13 @@ final class AppCoordinator: NSObject {
     private let insertionService: TextInsertionService
     private let audioOutputController: SystemAudioOutputControlling
     private let fileCleaner: TemporaryFileCleaning
+    private let contextProvider: DictationContextProviding
     let transcriptionHistory: TranscriptionHistory
 
     private var statusBarController: StatusBarController?
     private var settingsWindowController: SettingsWindowController?
     private var welcomeWindowController: WelcomeWindowController?
+    private var correctionWindowController: CorrectionWindowController?
     private var hudController: HUDController?
     private var stateCancellable: AnyCancellable?
     private var hotkeyCancellable: AnyCancellable?
@@ -53,6 +55,8 @@ final class AppCoordinator: NSObject {
     private var settingsObserver: NSObjectProtocol?
     private var activeWorkflowID: UUID?
     private var workflowTask: Task<Void, Never>?
+    private var contextEnrichmentTask: Task<DictationContextSnapshot, Never>?
+    private var capturedContext: DictationContextSnapshot?
     private var maximumDurationTask: Task<Void, Never>?
     private var resetTask: Task<Void, Never>?
     private var capturedTarget: TargetApplication?
@@ -73,7 +77,8 @@ final class AppCoordinator: NSObject {
         insertionService: TextInsertionService,
         audioOutputController: SystemAudioOutputControlling,
         fileCleaner: TemporaryFileCleaning = TemporaryFileCleaner(),
-        transcriptionHistory: TranscriptionHistory = TranscriptionHistory()
+        transcriptionHistory: TranscriptionHistory = TranscriptionHistory(),
+        contextProvider: DictationContextProviding = DefaultDictationContextProvider()
     ) {
         self.settings = settings
         self.stateMachine = stateMachine
@@ -88,6 +93,7 @@ final class AppCoordinator: NSObject {
         self.audioOutputController = audioOutputController
         self.fileCleaner = fileCleaner
         self.transcriptionHistory = transcriptionHistory
+        self.contextProvider = contextProvider
         super.init()
     }
 
@@ -238,8 +244,10 @@ final class AppCoordinator: NSObject {
             return
         }
         hotkeyPressedAt = Date()
+        let target: TargetApplication
         do {
-            capturedTarget = try captureTargetApplication()
+            target = try captureTargetApplication()
+            capturedTarget = target
             lastErrorDetails = nil
             try stateMachine.transition(to: .preparing)
         } catch {
@@ -256,6 +264,9 @@ final class AppCoordinator: NSObject {
                 try Task.checkCancellation()
                 guard self.activeWorkflowID == workflowID else { return }
                 try self.audioRecorder.start()
+                // Capture context after the microphone is already recording so AX
+                // queries never delay audio capture or clip the user's first words.
+                self.startContextCapture(for: target)
                 // Starting the engine also queries the input-device graph.
                 // Finish those queries before a process mute tap changes it.
                 try self.beginSystemAudioSilencing(for: workflowID)
@@ -297,6 +308,7 @@ final class AppCoordinator: NSObject {
         activeWorkflowID = nil
         workflowTask?.cancel()
         workflowTask = nil
+        clearCapturedContext()
         maximumDurationTask?.cancel()
         maximumDurationTask = nil
         audioRecorder.cancel()
@@ -320,6 +332,7 @@ final class AppCoordinator: NSObject {
         activeWorkflowID = nil
         workflowTask?.cancel()
         workflowTask = nil
+        clearCapturedContext()
         maximumDurationTask?.cancel()
         maximumDurationTask = nil
         audioRecorder.cancel()
@@ -340,6 +353,7 @@ final class AppCoordinator: NSObject {
         maximumDurationTask = nil
         if enforceMinimum, !RecordingPolicy.shouldTranscribe(elapsed: elapsed) {
             activeWorkflowID = nil
+            clearCapturedContext()
             audioRecorder.cancel()
             restoreSystemAudio(for: workflowID)
             do {
@@ -390,24 +404,59 @@ final class AppCoordinator: NSObject {
             guard let key = try credentialStore.load(), !key.isEmpty else {
                 throw TranscriptionError.missingAPIKey
             }
+            let resolvedContext = await resolveCapturedContext()
+            try Task.checkCancellation()
+            guard activeWorkflowID == workflowID else { return }
+            if let resolvedContext {
+                let repoName = resolvedContext.gitContext?.repositoryName ?? "none"
+                let keyCount = resolvedContext.gitContext?.issueKeys.count ?? 0
+                AppLogger.transcription.info(
+                    "Active context: app=\(resolvedContext.appName, privacy: .public), repo=\(repoName, privacy: .public), issueKeys=\(keyCount, privacy: .public)"
+                )
+            }
+            let effectivePrompt = DictationContextComposer.composePrompt(
+                basePrompt: settings.transcriptionPrompt,
+                learnedHints: settings.learnedPromptHints,
+                context: resolvedContext
+            )
             let configuration = TranscriptionConfiguration(
                 apiKey: key,
                 model: settings.model,
                 language: settings.language,
-                contextPrompt: settings.transcriptionPrompt
+                contextPrompt: effectivePrompt
             )
-            let transcript = try await transcriptionService.transcribe(
+            let rawTranscript = try await transcriptionService.transcribe(
                 fileURL: recording.fileURL,
                 configuration: configuration
             )
             try Task.checkCancellation()
             guard activeWorkflowID == workflowID else { return }
 
-            guard !PromptEchoDetector.isLikelyEcho(transcript: transcript, contextPrompt: settings.transcriptionPrompt) else {
+            // Only check prompt echoes against static prompt sections (base prompt + learned hints),
+            // never against dynamic quoted `Recent dictation` or `Text before cursor`, so repeating
+            // the same 30+ character instruction twice within 5 minutes is never discarded.
+            let staticPrompt = DictationContextComposer.composePrompt(
+                basePrompt: settings.transcriptionPrompt,
+                learnedHints: settings.learnedPromptHints,
+                context: nil
+            )
+            let isPromptEcho = PromptEchoDetector.isLikelyEcho(
+                transcript: rawTranscript,
+                contextPrompt: settings.transcriptionPrompt
+            ) || PromptEchoDetector.isLikelyEcho(
+                transcript: rawTranscript,
+                contextPrompt: staticPrompt
+            )
+            guard !isPromptEcho else {
                 AppLogger.transcription.info("Discarding a transcription that echoes the context prompt")
                 cancelBenignly(message: "No speech detected")
                 return
             }
+
+            let transcript = TranscriptPostProcessor.apply(
+                settings.learnedReplacements,
+                to: rawTranscript
+            )
 
             transcriptionHistory.add(transcript)
             statusBarController?.refreshRecentTranslationsMenu()
@@ -494,11 +543,63 @@ final class AppCoordinator: NSObject {
         try audioOutputController.silenceForDictation(workflowID: workflowID)
     }
 
+    private func startContextCapture(for target: TargetApplication) {
+        clearCapturedContext()
+        guard settings.includeActiveContext else { return }
+        let recent = transcriptionHistory.mostRecent(within: 300)
+        let immediate = contextProvider.captureImmediateContext(
+            for: target,
+            recentTranscription: recent
+        )
+        capturedContext = immediate
+        let provider = contextProvider
+        contextEnrichmentTask = Task {
+            await provider.enrichContext(immediate, target: target)
+        }
+    }
+
+    private func resolveCapturedContext() async -> DictationContextSnapshot? {
+        guard settings.includeActiveContext else {
+            clearCapturedContext()
+            return nil
+        }
+        // Detach without cancelling the task we are about to await.
+        let fallback = capturedContext
+        let task = contextEnrichmentTask
+        contextEnrichmentTask = nil
+        capturedContext = nil
+        guard let task else { return fallback }
+
+        // Bound wait after key-up to 250 ms so slow Git/SVN never stalls transcription;
+        // enrichment starts when recording begins, so it is almost always already complete.
+        return await withTaskGroup(of: DictationContextSnapshot?.self) { group in
+            group.addTask { await task.value }
+            group.addTask {
+                try? await Task.sleep(for: .milliseconds(250))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            if let first {
+                return first
+            }
+            task.cancel()
+            return fallback
+        }
+    }
+
+    private func clearCapturedContext() {
+        contextEnrichmentTask?.cancel()
+        contextEnrichmentTask = nil
+        capturedContext = nil
+    }
+
     private func fail(_ error: Error) {
         let workflowID = activeWorkflowID
         activeWorkflowID = nil
         workflowTask?.cancel()
         workflowTask = nil
+        clearCapturedContext()
         maximumDurationTask?.cancel()
         maximumDurationTask = nil
         audioRecorder.cancel()
@@ -579,6 +680,7 @@ final class AppCoordinator: NSObject {
         activeWorkflowID = nil
         workflowTask?.cancel()
         workflowTask = nil
+        clearCapturedContext()
         maximumDurationTask?.cancel()
         maximumDurationTask = nil
         resetTask?.cancel()
@@ -601,6 +703,7 @@ final class AppCoordinator: NSObject {
                 copyRecentTranslation: { [weak self] translation in
                     self?.insertionService.copy(translation)
                 },
+                correctLastTranscription: { [weak self] in self?.openCorrectionWindow() },
                 selectMicrophone: { [weak self] selection in
                     self?.selectMicrophone(selection)
                 },
@@ -679,6 +782,47 @@ final class AppCoordinator: NSObject {
     }
 
     private func openSettings() { settingsWindowController?.show() }
+
+    private func openCorrectionWindow() {
+        let entries = transcriptionHistory.entries
+        guard !entries.isEmpty, !stateMachine.state.isActive else { return }
+        if let existing = correctionWindowController {
+            existing.show()
+            return
+        }
+        let returnTarget = lastExternalTarget
+        var controller: CorrectionWindowController?
+        let dismissAction: () -> Void = { [weak self] in
+            guard let self else { return }
+            if self.correctionWindowController === controller {
+                self.correctionWindowController?.dismiss()
+                self.correctionWindowController = nil
+            }
+            if let returnTarget,
+               let app = NSRunningApplication(processIdentifier: returnTarget.processIdentifier),
+               !app.isTerminated {
+                app.activate(options: [])
+            }
+        }
+        let viewModel = CorrectionViewModel(
+            entries: entries,
+            settings: settings,
+            credentialStore: credentialStore,
+            onApplyCorrected: { [weak self] index, corrected in
+                guard let self else { return }
+                self.transcriptionHistory.replace(at: index, with: corrected)
+                self.statusBarController?.refreshRecentTranslationsMenu()
+                self.insertionService.copy(corrected)
+            },
+            onDismiss: dismissAction
+        )
+        let newController = CorrectionWindowController(viewModel: viewModel) {
+            viewModel.cancel()
+        }
+        controller = newController
+        correctionWindowController = newController
+        newController.show()
+    }
 
     private func copyLastError() {
         guard let lastErrorDetails else { return }

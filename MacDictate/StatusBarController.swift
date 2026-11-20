@@ -9,6 +9,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let cancel: () -> Void
         let copyLastError: () -> Void
         let copyRecentTranslation: (String) -> Void
+        let correctLastTranscription: () -> Void
         let selectMicrophone: (AudioInputSelection) -> Void
         let openSettings: () -> Void
         let openAccessibilitySettings: () -> Void
@@ -30,6 +31,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let copyErrorMenuItem: NSMenuItem
     private let recentTranslationsMenuItem: NSMenuItem
     private let recentTranslationsMenu: NSMenu
+    private let correctLastMenuItem: NSMenuItem
     private let microphoneMenuItem: NSMenuItem
     private let microphoneMenu: NSMenu
     private var microphoneMenuSelections: [Int: AudioInputSelection] = [:]
@@ -81,6 +83,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let recentTranslationsMenu = NSMenu(title: "Recent Transcriptions")
         recentTranslationsItem.submenu = recentTranslationsMenu
         menu.addItem(recentTranslationsItem)
+        let correctLast = NSMenuItem(
+            title: "Correct Last Transcription…",
+            action: #selector(handleCorrectLastTranscription),
+            keyEquivalent: ""
+        )
+        correctLast.isEnabled = false
+        menu.addItem(correctLast)
         menu.addItem(.separator())
 
         let microphonePickerItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
@@ -109,6 +118,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.copyErrorMenuItem = copyError
         self.recentTranslationsMenuItem = recentTranslationsItem
         self.recentTranslationsMenu = recentTranslationsMenu
+        self.correctLastMenuItem = correctLast
         self.microphoneMenuItem = microphonePickerItem
         self.microphoneMenu = microphoneMenu
         super.init()
@@ -118,6 +128,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         stop.target = self
         cancel.target = self
         copyError.target = self
+        correctLast.target = self
         settingsItem.target = self
         accessibilityItem.target = self
         microphoneItem.target = self
@@ -170,7 +181,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         recentTranslationsMenu.removeAllItems()
 
         let entries = transcriptionHistory.entries
-        recentTranslationsMenuItem.isEnabled = !entries.isEmpty && !stateMachine.state.isActive
+        let canUseHistory = !entries.isEmpty && !stateMachine.state.isActive
+        recentTranslationsMenuItem.isEnabled = canUseHistory
+        correctLastMenuItem.isEnabled = canUseHistory
         guard !entries.isEmpty else {
             let emptyItem = NSMenuItem(title: "No recent transcriptions", action: nil, keyEquivalent: "")
             emptyItem.isEnabled = false
@@ -264,6 +277,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func handleStop() { actions.stop() }
     @objc private func handleCancel() { actions.cancel() }
     @objc private func handleCopyLastError() { actions.copyLastError() }
+    @objc private func handleCorrectLastTranscription() { actions.correctLastTranscription() }
     @objc private func handleOpenSettings() { actions.openSettings() }
     @objc private func handleOpenAccessibilitySettings() { actions.openAccessibilitySettings() }
     @objc private func handleOpenMicrophoneSettings() { actions.openMicrophoneSettings() }

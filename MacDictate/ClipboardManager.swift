@@ -84,12 +84,29 @@ final class TranscriptionHistory {
     static let maximumCount = 5
 
     private(set) var entries: [String] = []
+    private(set) var lastRecordedAt: Date?
 
-    func add(_ translation: String) {
+    func add(_ translation: String, at date: Date = Date()) {
         guard !translation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         entries.insert(translation, at: 0)
+        lastRecordedAt = date
         if entries.count > Self.maximumCount {
             entries.removeLast()
         }
+    }
+
+    func mostRecent(within maxAge: TimeInterval, now: Date = Date()) -> String? {
+        guard let first = entries.first,
+              let lastRecordedAt,
+              now.timeIntervalSince(lastRecordedAt) <= maxAge else {
+            return nil
+        }
+        return first
+    }
+
+    func replace(at index: Int, with translation: String) {
+        let trimmed = translation.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard entries.indices.contains(index), !trimmed.isEmpty else { return }
+        entries[index] = trimmed
     }
 }

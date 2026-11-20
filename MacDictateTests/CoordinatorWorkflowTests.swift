@@ -578,4 +578,33 @@ final class CoordinatorWorkflowTests: XCTestCase {
 
         XCTAssertEqual(audioOutputController.silenceCount, 0)
     }
+
+    func testRepeatingSameLongDictationWithinFiveMinutesIsNotDiscardedAsPromptEcho() async throws {
+        let repeated = "Yes, go ahead and commit those changes to main."
+        transcription.behavior = .success(repeated)
+
+        try await holdThroughMinimumPress()
+        coordinator.finishDictation()
+        await waitFor("first dictation should complete") { self.stateMachine.state.isTerminal }
+        XCTAssertEqual(stateMachine.state, .completed(message: "Text inserted"))
+
+        // Second identical dictation immediately after (while first is in Recent dictation context).
+        try await holdThroughMinimumPress()
+        coordinator.finishDictation()
+        await waitFor("second dictation should complete") { self.stateMachine.state.isTerminal }
+        XCTAssertEqual(stateMachine.state, .completed(message: "Text inserted"))
+        XCTAssertEqual(insertion.inserted, [repeated, repeated])
+    }
+
+    func testLearnedReplacementsAreAppliedBeforeInsertionAndHistory() async throws {
+        settings.addLearnedReplacement(LearnedReplacement(from: "TRX Link", to: "TRXLINK"))
+        transcription.behavior = .success("Check the TRX Link issue")
+
+        try await holdThroughMinimumPress()
+        coordinator.finishDictation()
+        await waitFor("workflow should complete") { self.stateMachine.state.isTerminal }
+
+        XCTAssertEqual(insertion.inserted, ["Check the TRXLINK issue"])
+        XCTAssertEqual(coordinator.transcriptionHistory.entries.first, "Check the TRXLINK issue")
+    }
 }

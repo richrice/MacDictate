@@ -144,6 +144,9 @@ final class SettingsStore: ObservableObject {
         static let model = "transcriptionModel"
         static let language = "transcriptionLanguage"
         static let prompt = "transcriptionPrompt"
+        static let includeActiveContext = "includeActiveContext"
+        static let learnedPromptHints = "learnedPromptHints"
+        static let learnedReplacements = "learnedReplacements"
         static let hotkey = "hotkeyShortcut"
         static let extendedKeyboardHotkeyEnabled = "extendedKeyboardHotkeyEnabled"
         static let extendedKeyboardHotkey = "extendedKeyboardHotkeyShortcut"
@@ -165,6 +168,9 @@ final class SettingsStore: ObservableObject {
     @Published var model: TranscriptionModel { didSet { defaults.set(model.rawValue, forKey: Key.model) } }
     @Published var language: TranscriptionLanguage { didSet { defaults.set(language.rawValue, forKey: Key.language) } }
     @Published var transcriptionPrompt: String { didSet { defaults.set(transcriptionPrompt, forKey: Key.prompt) } }
+    @Published var includeActiveContext: Bool { didSet { defaults.set(includeActiveContext, forKey: Key.includeActiveContext) } }
+    @Published var learnedPromptHints: [String] { didSet { persistLearnedPromptHints() } }
+    @Published var learnedReplacements: [LearnedReplacement] { didSet { persistLearnedReplacements() } }
     @Published var hotkey: HotkeyShortcut { didSet { persistHotkey() } }
     @Published var extendedKeyboardHotkeyEnabled: Bool { didSet { defaults.set(extendedKeyboardHotkeyEnabled, forKey: Key.extendedKeyboardHotkeyEnabled) } }
     @Published var extendedKeyboardHotkey: HotkeyShortcut { didSet { persistExtendedKeyboardHotkey() } }
@@ -184,6 +190,7 @@ final class SettingsStore: ObservableObject {
             Key.model: TranscriptionModel.full.rawValue,
             Key.language: TranscriptionLanguage.english.rawValue,
             Key.prompt: Self.defaultPrompt,
+            Key.includeActiveContext: true,
             Key.extendedKeyboardHotkeyEnabled: true,
             Key.debugLogging: false
         ])
@@ -211,6 +218,19 @@ final class SettingsStore: ObservableObject {
         model = TranscriptionModel(rawValue: defaults.string(forKey: Key.model) ?? "") ?? .full
         language = TranscriptionLanguage(rawValue: defaults.string(forKey: Key.language) ?? "") ?? .english
         transcriptionPrompt = defaults.string(forKey: Key.prompt) ?? Self.defaultPrompt
+        includeActiveContext = defaults.bool(forKey: Key.includeActiveContext)
+        if let data = defaults.data(forKey: Key.learnedPromptHints),
+           let decoded = try? JSONDecoder().decode([String].self, from: data) {
+            learnedPromptHints = decoded
+        } else {
+            learnedPromptHints = []
+        }
+        if let data = defaults.data(forKey: Key.learnedReplacements),
+           let decoded = try? JSONDecoder().decode([LearnedReplacement].self, from: data) {
+            learnedReplacements = decoded
+        } else {
+            learnedReplacements = []
+        }
         debugLogging = defaults.bool(forKey: Key.debugLogging)
         hasCompletedSetup = defaults.bool(forKey: Key.hasCompletedSetup)
         hasSeenMuteNotice = defaults.bool(forKey: Key.hasSeenMuteNotice)
@@ -240,6 +260,57 @@ final class SettingsStore: ObservableObject {
 
     func restoreDefaultHotkey() {
         hotkey = .defaultShortcut
+    }
+
+    func addLearnedPromptHint(_ hint: String) {
+        let trimmed = hint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if learnedPromptHints.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+            return
+        }
+        var updated = learnedPromptHints
+        updated.insert(trimmed, at: 0)
+        if updated.count > 15 {
+            updated = Array(updated.prefix(15))
+        }
+        learnedPromptHints = updated
+    }
+
+    func removeLearnedPromptHint(_ hint: String) {
+        learnedPromptHints.removeAll { $0 == hint }
+    }
+
+    func addLearnedReplacement(_ rule: LearnedReplacement) {
+        let trimmedFrom = rule.from.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedTo = rule.to.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedFrom.isEmpty,
+              !trimmedTo.isEmpty,
+              trimmedFrom.caseInsensitiveCompare(trimmedTo) != .orderedSame else {
+            return
+        }
+        let normalized = LearnedReplacement(from: trimmedFrom, to: trimmedTo)
+        var updated = learnedReplacements.filter {
+            $0.from.caseInsensitiveCompare(trimmedFrom) != .orderedSame
+        }
+        updated.insert(normalized, at: 0)
+        if updated.count > 50 {
+            updated = Array(updated.prefix(50))
+        }
+        learnedReplacements = updated
+    }
+
+    func removeLearnedReplacement(_ rule: LearnedReplacement) {
+        learnedReplacements.removeAll { $0.id == rule.id }
+    }
+
+    private func persistLearnedPromptHints() {
+        guard let data = try? JSONEncoder().encode(learnedPromptHints) else { return }
+        defaults.set(data, forKey: Key.learnedPromptHints)
+    }
+
+    private func persistLearnedReplacements() {
+        guard let data = try? JSONEncoder().encode(learnedReplacements) else { return }
+        defaults.set(data, forKey: Key.learnedReplacements)
     }
 
     private func persistHotkey() {

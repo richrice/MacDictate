@@ -115,7 +115,7 @@ MacDictate never synthesizes Return or Enter.
 
 - **General:** launch at login, HUD, sounds, app-local microphone choice, process-level system-audio silencing until delivery, automatic insertion, optional persistent transcript copy, recent-transcription recovery, and recording limit.
 - **Hotkey:** simultaneous laptop and extended-keyboard shortcuts, modifier/Space and F13–F19 presets, default restoration, and independent live registration/conflict status. Right Control is the extended-keyboard default and is dedicated to dictation while selected. Some keyboards map F13–F15 to Print Screen, Scroll Lock, or Pause; modifier-only shortcuts, hardware actions, and remapping software cannot create a detectable registration conflict.
-- **OpenAI:** save/replace/delete the Keychain credential, key verification, model, language, context prompt, and prompt reset.
+- **OpenAI:** save/replace/delete the Keychain credential, key verification, model, language, active window/cursor/Git context toggle, context prompt, and prompt reset.
 - **Permissions:** live Microphone and Accessibility states with links to the correct System Settings panes.
 - **Diagnostics:** version/build, redacted diagnostics, recent redacted unified logs, Console shortcut, and content-free debug metadata logging.
 
